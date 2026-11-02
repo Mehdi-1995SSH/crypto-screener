@@ -364,14 +364,37 @@ def stop_loss_reason(coin):
         return None
     pct = (coin.price_usd / coin.entry_price - 1) * 100
     if pct <= -STOP_LOSS_PCT:
-        return f"Stop-loss - price {pct:+.1f}% vs entry ${coin.entry_price:.6g}"
+        return f"Stop-loss - price {pct:+.1f}% vs entry ${plain_price(coin.entry_price)}"
     return None
+
+
+def plain_price(v):
+    """6 significant digits as a plain decimal - never scientific notation
+    ($0.00007703, not $7.703e-05)."""
+    from decimal import Decimal
+    return format(Decimal(f"{v:.6g}"), "f")
+
+
+def dexscreener_buyers_dominate(coin):
+    """DexScreener's 24h transactions over the coin's pools on its chain:
+    buys > sells (1 request). False when DexScreener has nothing / fails."""
+    from fetch_dexscreener import fetch_pairs_for_addresses
+    try:
+        pairs = fetch_pairs_for_addresses([coin.contract])
+    except Exception:
+        return False
+    mine = [p for p in pairs or [] if (p.get("chainId") or "").lower() == (coin.chain or "").lower()
+            and ((p.get("baseToken") or {}).get("address") or "").lower() == (coin.contract or "").lower()]
+    h24 = [((p.get("txns") or {}).get("h24") or {}) for p in mine]
+    return sum(t.get("buys") or 0 for t in h24) > sum(t.get("sells") or 0 for t in h24)
 
 
 def stop_loss_recovery(session, coin, dropped_at, today):
     """True when a stop-loss drop's own recovery conditions hold: price at
     least STOP_LOSS_REBOUND_PCT above its price on the drop day, and buyers
-    dominating the latest Codex day (trade_flows, today or yesterday)."""
+    dominating the latest Codex day (trade_flows, today or yesterday) - or,
+    when Codex has no such day (missing or 0 / 0, e.g. a Codex-blind coin),
+    DexScreener's 24h buys > sells."""
     from models import TradeFlow
     drop_day = dropped_at.date() if hasattr(dropped_at, "date") else dropped_at
     snap = (session.query(DailySnapshot.price_usd)
@@ -385,9 +408,13 @@ def stop_loss_recovery(session, coin, dropped_at, today):
                     TradeFlow.contract == (coin.contract or "").lower(),
                     TradeFlow.day >= today - timedelta(days=1))
             .order_by(TradeFlow.day.desc()).first())
-    buyers = bool(flow and ((flow.buy_count or 0) > (flow.sell_count or 0)
-                            or (flow.buy_volume or 0) > (flow.sell_volume or 0)))
-    return rebound and buyers
+    if not rebound:
+        return False                               # no DexScreener call needed
+    bc, sc = (flow.buy_count or 0, flow.sell_count or 0) if flow else (0, 0)
+    bv, sv = (flow.buy_volume or 0, flow.sell_volume or 0) if flow else (0, 0)
+    if bc + sc or bv + sv:                         # Codex has the day
+        return bc > sc or bv > sv
+    return dexscreener_buyers_dominate(coin)
 
 
 def in_grace(coin, today):

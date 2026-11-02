@@ -65,9 +65,14 @@ c.price_usd = 0.85
 reason = D.stop_loss_reason(c)
 assert reason == "Stop-loss - price -15.0% vs entry $1"
 assert D.stop_loss_reason(M.Coin(name="y", entry_price=None, price_usd=0.1)) is None
+# plain decimals, never scientific notation (Telegram + the Arabic regex)
+tiny = D.stop_loss_reason(M.Coin(name="t", entry_price=7.703e-05, price_usd=6e-05))
+assert tiny == "Stop-loss - price -22.1% vs entry $0.00007703", tiny
+assert D.plain_price(28132.0) == "28132" and D.plain_price(1.13) == "1.13" and D.plain_price(0.0000001234567) == "0.000000123457"
 import main, daily_report                                                        # Telegram + Arabic wording
 assert daily_report._reason_kind(reason) == "ستوب لوس (-15%)"
 assert main.reason_ar(reason) != reason and "وقف الخسارة" in main.reason_ar(reason)
+assert "0.00007703" in main.reason_ar(tiny) and "وقف الخسارة" in main.reason_ar(tiny)
 
 # ---------------------------------------------------------------- 3. run_drop_logic: day 1 + smart recovery
 eng = create_engine("sqlite://")
@@ -98,7 +103,31 @@ for name, price, buys, sells in (("small", 0.83, 9, 1),     # +3.75% from the dr
     s.add(M.DailySnapshot(coin_id=c.id, date=dropped_at.date(), price_usd=0.80))
     s.add(M.TradeFlow(chain="ethereum", contract=c.contract, day=today, buy_volume=float(buys),
                       sell_volume=float(sells), buy_count=buys, sell_count=sells))
+# Codex-blind coins (no trade_flows row, or 0 / 0): DexScreener 24h txns decide
+for name, zero_row in (("blind_buy", False), ("blind_sell", False), ("zero_buy", True)):
+    c = coin(name, "dropped", 0.85)
+    s.add(M.DroppedCoin(coin_id=c.id, dropped_date=dropped_at, reason="Stop-loss - price -20.0% vs entry $1"))
+    s.add(M.DailySnapshot(coin_id=c.id, date=dropped_at.date(), price_usd=0.80))
+    if zero_row:
+        s.add(M.TradeFlow(chain="ethereum", contract=c.contract, day=today, buy_volume=0.0,
+                          sell_volume=0.0, buy_count=0, sell_count=0))
 s.commit()
+DEX_TXNS = {"0xblind_buy": (30, 10), "0xblind_sell": (10, 30), "0xzero_buy": (12, 5)}
+dex_calls = []
+
+
+def fake_pairs(addresses):
+    dex_calls.extend(addresses)
+    out = []
+    for a in addresses:
+        b, sl = DEX_TXNS[a]
+        out += [{"chainId": "ethereum", "baseToken": {"address": a}, "txns": {"h24": {"buys": b, "sells": sl}}},
+                {"chainId": "bsc", "baseToken": {"address": a}, "txns": {"h24": {"buys": 0, "sells": 999}}}]  # other chain: ignored
+    return out
+
+
+import fetch_dexscreener
+fetch_dexscreener.fetch_pairs_for_addresses = fake_pairs
 
 L.coin_evaluation = lambda session, coin, day: {"verdict": L.HEALTHY}           # liquidity healthy
 L.store_verdict = L.log_decision = lambda *a, **k: None
@@ -117,5 +146,8 @@ assert s.query(M.DroppedCoin).filter_by(coin_id=st["fresh"].id).one().reason == 
 assert st["ok"].status == "active"
 assert st["small"].status == "dropped" and st["sellers"].status == "dropped" and st["sick"].status == "dropped"
 assert st["back"].status == "active" and st["back"].entry_price == 0.85          # fresh baseline
-assert stats["recovered"] == 1
+assert st["blind_buy"].status == "active" and st["zero_buy"].status == "active"   # DexScreener 24h buys > sells
+assert st["blind_sell"].status == "dropped"                                        # DexScreener sellers win
+assert sorted(dex_calls) == ["0xblind_buy", "0xblind_sell", "0xzero_buy"]          # only when Codex has no day
+assert stats["recovered"] == 3
 print("entry rules self-check: ok")
