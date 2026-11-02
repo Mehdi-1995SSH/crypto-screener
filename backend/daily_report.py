@@ -85,6 +85,7 @@ class RunReport:
         self.scored = None          # number of coins scored
         self.listings = None        # listings.run_listings_update() stats
         self.volume = None          # volume_anomaly.run_volume_anomaly_detection() stats
+        self.filter_eval = None     # filter_eval.run_filter_eval() - a report every 5 days
         self.price_check = None     # price_sources.run_price_sanity() stats
         self.birdeye = None         # liquidity_verify.run_birdeye_fetch() stats
 
@@ -193,6 +194,30 @@ def _api_usage(session, today):
 
 
 # ---------------------------------------------------------------- the message
+def filter_eval_lines(fe):
+    """🧪 The 5-day filter self-evaluation (filter_eval.summary), only on a
+    report day (every 5 days); [] otherwise."""
+    if not fe:
+        return []
+    lines = ["\n🧪 تقييم الفلاتر (5 أيام) — ربح = +10% أو أكثر بعد 5 أيام"]
+    p = fe.get("passed")
+    if p:
+        lines.append(f"✅ دخلو: {p['n']} · ربحو {p['wins']} ({p['win_rate']}%) · متوسط {p['avg']:+.1f}%"
+                     f" · طاحو {p['fell']} · وصلو للستوب لوس (-15%) {p['stop_loss']}")
+        lv = p["losers_vs_winners"]
+        f = lambda v, pre="", suf="": "—" if v is None else f"{pre}{v:,.0f}{suf}"
+        lines.append(f"   الخاسرين / الرابحين: العمر {f(lv['age_days'][0], suf='d')} / {f(lv['age_days'][1], suf='d')}"
+                     f" · فوق أدنى 14 يوم {f(lv['gain_14d'][0], suf='%')} / {f(lv['gain_14d'][1], suf='%')}"
+                     f" · السيولة {f(lv['liquidity_usd'][0], '$')} / {f(lv['liquidity_usd'][1], '$')}")
+    for name, v in (fe.get("rejected") or {}).items():
+        lines.append(f"❌ {name}: رفض {v['n']} · فاتونا {v['wins']} رابحين ({v['win_rate']}%) · متوسط {v['avg']:+.1f}%")
+    if fe.get("too_strict"):
+        lines.append(f"⚠️ الفلتر لي ممكن يكون صارم بزاف: {fe['too_strict']}")
+    if fe.get("no_price"):
+        lines.append(f"   (بلا ثمن ف DexScreener: {fe['no_price']})")
+    return lines
+
+
 def build_message(rep, session):
     """The report text (Arabic). Never raises on missing parts."""
     from calendar import monthrange
@@ -296,6 +321,8 @@ def build_message(rep, session):
         lines.append(f"\n📊 فوليوم غير عادي: {len(vol['alerts'])}")
         lines.extend(f"• {'🚨' if sev == 'big' else '⚠️'} {n} — {ratio:.1f}x ({usd(today)} مقابل متوسط {usd(avg)})"
                      for n, sev, ratio, today, avg in vol["alerts"][:MAX_NAMES])
+
+    lines.extend(filter_eval_lines((rep.filter_eval or {}).get("report")))
 
     # ⚠️ borderline price disagreement, 1.5x-2x (warning only; > 2x = removed)
     pc = rep.price_check or {}

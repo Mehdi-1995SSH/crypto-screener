@@ -104,6 +104,16 @@ def run_pipeline(raise_on_error=False):
                         "refreshing existing active coins.")
             saved_new = 0
 
+        # 5-day filter self-evaluation (Telegram only): after the save, so
+        # today's entries cancel their pending rejections first; measures the
+        # rows that reached day 5 (~2 DexScreener requests), reports every 5 days.
+        try:
+            from filter_eval import run_filter_eval
+            report.filter_eval = run_filter_eval()
+        except Exception:
+            log.exception("Filter self-evaluation failed - continuing.")
+            report.step_errors.append("Filter evaluation")
+
         # These run EVERY day regardless of discovery, so existing coins stay
         # fresh even when DexScreener is down. (drop_logic itself safely skips
         # dropping when it can't fetch live data, so there are no false drops.)

@@ -843,3 +843,34 @@ class UnlocksDisplayCache(Base):
     id = Column(Integer, primary_key=True)
     data = Column(Text, nullable=False)                        # JSON list
     computed_at = Column(DateTime, nullable=False)
+
+
+class FilterEval(Base):
+    """
+    5-day filter self-evaluation (filter_eval.py): every evaluable entry
+    rejection and every new entry, priced again 5 days later (DexScreener).
+    Telegram only - the website never reads it.
+    """
+    __tablename__ = "filter_evals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    kind = Column(String, nullable=False)                      # "passed" / "rejected"
+    rejected_by = Column(String)                               # age_10d / buyers_24h / revenue / volume_35 / price_gain / security / liquidity
+    chain = Column(String, nullable=False)
+    contract = Column(String, nullable=False, index=True)      # original case (Solana is case-sensitive)
+    symbol = Column(String)
+    coin_id = Column(Integer)                                  # passed coins
+    logged_on = Column(Date, nullable=False, index=True)       # day 0
+    price0 = Column(Float)                                     # DexScreener price at day 0
+    age_days = Column(Float)                                   # entry context (what the step knew)
+    buys_24h = Column(Integer)
+    sells_24h = Column(Integer)
+    gain_14d = Column(Float)
+    gain_60d = Column(Float)
+    liquidity_usd = Column(Float)
+    mcap = Column(Float)
+    status = Column(String, nullable=False, default="pending", index=True)   # pending / measured / no_price / reported
+    price5 = Column(Float)
+    return_pct = Column(Float)
+    measured_on = Column(Date)
+    reported_on = Column(Date)
