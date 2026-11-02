@@ -6,10 +6,9 @@ one-time ENTRY gate for new coins; drop_logic only watches coins ALREADY in
 active / dropped. It runs daily after discover -> filter -> save -> tracking.
 
 It uses ONE set of 5 health criteria, both for dropping and for recovery:
-    * volume falling      - the last 5 complete days' average volume more
-                            than 20% below the 5 days before (stored daily
-                            history); both averages under $2,000/day = too
-                            little trading to judge = healthy
+    * volume too low /    - CoinGecko 24h volume (stored daily; new coins:
+      falling               Codex daily bars): the last 5 readings' average
+                            under $2,000/day, or 35%+ below the 5 before
     * liquidity down >15% - vs the reading up to 30 days ago (or since it
                             entered active, if shorter), on BOTH Codex and
                             DexScreener (two sources must agree; fix 4 ->
@@ -21,8 +20,8 @@ It uses ONE set of 5 health criteria, both for dropping and for recovery:
                             (coins.holders_at_entry; no baseline -> skipped)
     * honeypot unsafe     - GoPlus (EVM) / RugCheck (Solana); the fields are re-saved daily
 Volume + liquidity come ONLY from the daily readings that tracking.py stores
-(~2-3 bulk Codex requests/day for all coins, plus DexScreener).
-NO CoinGecko here - CoinGecko is only the one-time entry check.
+(CoinGecko / CMC volume from discovery, ~2-3 bulk Codex requests/day for all
+coins, plus DexScreener) - no extra API calls here.
 "Unknown" (not enough readings yet, no data) counts as healthy - never drop,
 or keep out, on missing data. Revenue is NOT part of this.
 
@@ -84,17 +83,20 @@ from models import Coin, DailySnapshot, DroppedCoin, RankHistory, VolumeSpike
 GRACE_DAYS = 5               # calendar days untouched after entering active
 RECOVERY_DAYS = 7            # daily recovery re-checks before permanent delete
 MAX_HOLDER_DROP_PCT = 10     # holders down more than this -> unhealthy
-# VOLUME FALLING: the last VOLUME_AVG_DAYS complete days' AVERAGE volume vs
-# the VOLUME_AVG_DAYS days before it (each coin's stored daily history,
-# entry_zone_bars). Falling = more than VOLUME_AVG_FALL_PCT lower. Fewer than
-# 2 x VOLUME_AVG_DAYS days of history = unknown = healthy.
-VOLUME_AVG_DAYS = 5          # compare 5-day averages ...
-VOLUME_AVG_FALL_PCT = 20     # ... falling = the newer average more than 20% lower
-# VOLUME FLOOR: when BOTH 5-day averages are under this (USD / day), the coin
-# trades too little on-chain for its trend to mean anything (e.g. EarthMeta,
-# ~$1-5K a day, swung -87% / back in a day) -> unknown = healthy. A coin that
-# collapses from above the floor to below it is still caught.
-VOLUME_MIN_AVG_USD = 2_000
+# VOLUME (two checks, on the AVERAGE of daily volume readings):
+#   * too low  - the last VOLUME_AVG_DAYS readings average under
+#                VOLUME_MIN_AVG_USD a day (a zombie coin nobody trades)
+#   * falling  - that average is VOLUME_AVG_FALL_PCT or more below the
+#                VOLUME_AVG_DAYS readings before it
+# Source: CoinGecko's 24h volume, stored every run (daily_snapshots.
+# total_volume - the entry filter's volume source too; CMC only for a coin
+# CoinGecko doesn't list). A coin without enough CoinGecko readings yet (new)
+# uses its stored Codex daily bars (entry_zone_bars) instead; neither -> unknown
+# = healthy. A drop goes through the normal 7-day recovery window.
+VOLUME_AVG_DAYS = 5          # 5-day averages
+VOLUME_AVG_FALL_PCT = 35     # falling = the newer average 35% or more lower
+VOLUME_MIN_AVG_USD = 2_000   # the last 5-day average under this (USD / day) = too low
+VOLUME_CG_LOOKBACK_DAYS = 14 # CoinGecko readings come from at most the last 14 days
 # LIQUIDITY DOWN SINCE ENTRY: unhealthy only when liquidity is more than this
 # below its level when the coin entered active (5-15% is normal movement).
 # TWO SOURCES must agree (like the crash check): Codex AND DexScreener each
@@ -350,46 +352,46 @@ def in_grace(coin, today):
     return since is not None and days_since(since, today) < GRACE_DAYS
 
 
-def codex_volume_trend(session, coin, today):
-    """'falling' if the last VOLUME_AVG_DAYS complete days' average volume is
-    more than VOLUME_AVG_FALL_PCT below the VOLUME_AVG_DAYS days before it
-    (stored daily history, entry_zone_bars); 'rising' / 'flat' otherwise;
-    'unknown' (healthy) without 2 x VOLUME_AVG_DAYS days of history."""
-    avgs = volume_avgs(session, coin, today)
-    if avgs is None or max(avgs) < VOLUME_MIN_AVG_USD:
-        return "unknown"                  # no history, or too little trading to judge
-    pct = volume_avg_change(session, coin, today)
-    if pct is None:
-        return "unknown"
-    if pct < -VOLUME_AVG_FALL_PCT:
-        return "falling"
-    return "rising" if pct > 0 else "flat"
-
-
-def volume_avgs(session, coin, today):
-    """(last, previous): the last VOLUME_AVG_DAYS complete days' average
-    volume and the VOLUME_AVG_DAYS before (stored daily history), or None."""
+def volume_series(session, coin, today, need):
+    """(daily volumes oldest first, source) with at least `need` readings:
+    CoinGecko's (daily_snapshots.total_volume, today's run included - each is
+    a full 24h window), else the stored Codex daily bars (complete days), else
+    (None, None)."""
+    vols = [r[0] for r in (session.query(DailySnapshot.total_volume)
+                           .filter(DailySnapshot.coin_id == coin.id, DailySnapshot.date <= today,
+                                   DailySnapshot.date > today - timedelta(days=VOLUME_CG_LOOKBACK_DAYS),
+                                   DailySnapshot.total_volume.isnot(None))
+                           .order_by(DailySnapshot.date))]
+    if len(vols) >= need:
+        return vols, "CoinGecko"
     from entry_zone import load_bars
     try:
         bars, _ = load_bars(session, coin)
     except Exception:
         session.rollback()
-        return None
+        return None, None
     vols = [v for d, _, v, _ in (bars or []) if d < today and v is not None]
+    return (vols, "Codex") if len(vols) >= need else (None, None)
+
+
+def volume_problem(session, coin, today):
+    """The unhealthy-volume reason (too low, or falling), or None (healthy /
+    not enough readings) - see VOLUME above."""
     n = VOLUME_AVG_DAYS
-    if len(vols) < 2 * n:
+    vols, _ = volume_series(session, coin, today, n)
+    if vols is None:
         return None
-    return sum(vols[-n:]) / n, sum(vols[-2 * n:-n]) / n
-
-
-def volume_avg_change(session, coin, today):
-    """% change: last VOLUME_AVG_DAYS complete days' average volume vs the
-    VOLUME_AVG_DAYS before (stored daily history), or None."""
-    avgs = volume_avgs(session, coin, today)
-    if avgs is None:
+    last = sum(vols[-n:]) / n
+    if last < VOLUME_MIN_AVG_USD:
+        return f"Volume too low ({n}-day average ${last:,.0f}/day, under ${VOLUME_MIN_AVG_USD:,})"
+    vols, _ = volume_series(session, coin, today, 2 * n)
+    if vols is None:
         return None
-    last, prev = avgs
-    return (last / prev - 1) * 100 if prev else None
+    last, prev = sum(vols[-n:]) / n, sum(vols[-2 * n:-n]) / n
+    pct = (last / prev - 1) * 100 if prev else None
+    if pct is not None and pct <= -VOLUME_AVG_FALL_PCT:
+        return f"Volume falling ({n}-day average {pct:+.0f}% vs the previous {n} days)"
+    return None
 
 
 def codex_volume_trend_single_day(session, coin, today):
@@ -463,14 +465,14 @@ def unhealthy_reason(coin, session, today):
     The health criteria (minus the 3-source liquidity verdict, which
     run_drop_logic applies first). Returns the first one that fires, or None if the
     coin is healthy. Unknown on any check counts as healthy. The two free
-    checks (stored Codex history) go first; the network ones after.
+    checks (stored volume / liquidity history) go first; the network ones after.
     """
     from holders_check import get_holder_count
     from security_check import check_token_security, store as store_security
 
-    if codex_volume_trend(session, coin, today) == "falling":
-        pct = volume_avg_change(session, coin, today)
-        return f"Volume falling ({VOLUME_AVG_DAYS}-day average {pct:+.0f}% vs the previous {VOLUME_AVG_DAYS} days)"
+    vol = volume_problem(session, coin, today)
+    if vol:
+        return vol
 
     liq, pct, base_date = codex_liquidity_trend(session, coin, today)
     if liq == "drop":

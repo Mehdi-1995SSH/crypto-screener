@@ -8,6 +8,12 @@ on:
     - cron: "0 6 * * *"   # 06:00 UTC every day
   workflow_dispatch: {}    # also lets you run it manually from the Actions tab
 
+# One run at a time: a manual run started while the scheduled one is going
+# waits for it instead of running the pipeline twice in parallel.
+concurrency:
+  group: daily-pipeline
+  cancel-in-progress: false
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest

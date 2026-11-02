@@ -109,7 +109,7 @@ def _reason_kind(reason):
         return "انهيار السعر"
     if r.startswith("Liquidity crash"):
         return "انهيار السيولة"
-    if r.startswith("Volume falling"):
+    if r.startswith("Volume falling") or r.startswith("Volume too low"):
         return "الفوليم"
     if r.startswith("Liquidity under"):
         return "سيولة أقل من $5K"

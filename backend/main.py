@@ -128,6 +128,10 @@ def reason_ar(reason):
     if m:
         return (f"حجم التداول يتراجع (متوسط آخر {_ltr(m.group(1))} أيام {pct(m.group(2))}"
                 f" مقارنة بـ{_ltr(m.group(1))} أيام قبلها)")
+    m = re.fullmatch(r"Volume too low \((\d+)-day average (\$[\d,]+)/day, under (\$[\d,]+)\)", r)
+    if m:
+        return (f"حجم التداول ضعيف جداً (متوسط آخر {_ltr(m.group(1))} أيام {_ltr(m.group(2))} في اليوم،"
+                f" أقل من {_ltr(m.group(3))})")
     m = re.fullmatch(r"Volume falling \(last (\d+) daily readings\)", r)
     if m:
         return f"حجم التداول يتراجع (آخر {_ltr(m.group(1))} قراءات يومية)"

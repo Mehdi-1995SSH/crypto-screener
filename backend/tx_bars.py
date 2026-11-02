@@ -30,8 +30,14 @@ drops a coin).
    getBars level). These roll every minute, so they're cached per coin for
    LIVE_TTL_MINUTES (vol_stats_cache).
 
+3. Days Codex has as 0 / missing (a dead or wrong pool) are filled from
+   GeckoTerminal's top pools (volume only - see GT_POOLS); a day that comes
+   back missing keeps the value saved earlier (keep_saved_days). Missing
+   stays None, never a fake 0. Requests: 2 tries, 6 s each (http_retry).
+
 Cost: only when someone opens a coin's page - at most 1 getBars request per
-coin per day plus 1 getDetailedTokenStats request per coin per hour.
+coin per day plus 1 getDetailedTokenStats request per coin per hour (+ up to
+3 keyless GeckoTerminal calls when Codex has 0 / missing days).
 """
 
 import json
@@ -39,8 +45,9 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
-import requests
 from dotenv import load_dotenv
+
+from http_retry import request, Transient
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 CODEX_KEY = os.getenv("CODEX_API_KEY")
@@ -49,6 +56,19 @@ CODEX_URL = "https://graph.codex.io/graphql"
 WINDOW_DAYS = 15            # Transactions chart
 MAX_HISTORY_DAYS = 1499     # one getBars request (Codex max 1,500 points)
 LIVE_TTL_MINUTES = 60       # 4h / 24h volume cache
+
+# FALLBACK for the days Codex has as 0 / missing (a dead or wrong pool, e.g.
+# Coinweb, TREAD): GeckoTerminal's daily OHLCV of the token's top GT_POOLS
+# pools, summed per day (DEX volume only - no CEX mixing; keyless, ~30 calls /
+# min). It has volume but no buy / sell counts, so those days carry volume only.
+GT_BASE = "https://api.geckoterminal.com/api/v2"
+GT_HEADERS = {"accept": "application/json;version=20230302"}
+GT_POOLS = 2
+# Our chain name -> GeckoTerminal network id.
+GT_NETWORKS = {"ethereum": "eth", "bsc": "bsc", "base": "base", "solana": "solana",
+               "arbitrum": "arbitrum", "optimism": "optimism", "polygon": "polygon_pos",
+               "avalanche": "avax", "zksync": "zksync", "cronos": "cro", "linea": "linea",
+               "blast": "blast", "sui": "sui-network", "hyperevm": "hyperevm"}
 
 BARS_QUERY = """
 query ($symbol: String!, $from: Int!, $to: Int!) {
@@ -75,6 +95,24 @@ def _num(v):
         return 0.0
 
 
+def _opt(v):
+    """float, or None when the source has no value (never a fake 0)."""
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _int(v):
+    v = _opt(v)
+    return int(v) if v is not None else None
+
+
+def _sum(vals):
+    vals = [v for v in vals if v is not None]
+    return sum(vals) if vals else None
+
+
 def _now_naive():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -88,10 +126,12 @@ def _codex(query, variables):
     if not CODEX_KEY:
         return None, "no Codex key configured"
     try:
-        body = requests.post(CODEX_URL, json={"query": query, "variables": variables},
-                             headers={"Authorization": CODEX_KEY}, timeout=30).json()
-    except (requests.exceptions.RequestException, ValueError) as e:
-        return None, f"Codex request failed ({str(e)[:80]})"
+        body = request("POST", CODEX_URL, json={"query": query, "variables": variables},
+                       headers={"Authorization": CODEX_KEY}).json()
+    except Transient as e:
+        return None, f"Codex request failed ({e})"
+    except ValueError:
+        return None, "Codex sent a bad answer"
     if body.get("errors"):
         return None, "Codex: " + (body["errors"][0].get("message") or "error")[:120]
     return body.get("data") or {}, None
@@ -131,14 +171,15 @@ def fetch_from_codex(contract, chain):
             continue                       # today's partial day - left out
         days.append({
             "date": day.isoformat(),
-            "buys": int(_num(at("buys"))),
-            "sells": int(_num(at("sells"))),
-            "buyers": int(_num(at("buyers"))),
-            "sellers": int(_num(at("sellers"))),
-            "buy_volume": _num(at("buyVolume")),
-            "sell_volume": _num(at("sellVolume")),
-            "volume": _num(at("volume")),
-            "transactions": int(_num(at("transactions"))),
+            "buys": _int(at("buys")),
+            "sells": _int(at("sells")),
+            "buyers": _int(at("buyers")),
+            "sellers": _int(at("sellers")),
+            "buy_volume": _opt(at("buyVolume")),
+            "sell_volume": _opt(at("sellVolume")),
+            "volume": _opt(at("volume")),
+            "transactions": _int(at("transactions")),
+            "source": "codex",
         })
     # Liquidity now = the latest bar (today's, so far); 7 days ago = the bar
     # dated a week before today (or the nearest earlier one).
@@ -150,10 +191,89 @@ def fetch_from_codex(contract, chain):
         "liq_7d_ago": liq_7d_ago,
         "liq_7d_ago_date": max(week_ago).isoformat() if week_ago else None,
         "bars": days[-WINDOW_DAYS:],
-        "vol_7d": sum(d["volume"] for d in days[-7:]) if days else None,
-        "vol_total": sum(d["volume"] for d in days) if days else None,
+        "vol_7d": _sum(d["volume"] for d in days[-7:]),
+        "vol_total": _sum(d["volume"] for d in days),
         "since": days[0]["date"] if days else None,
     }, None
+
+
+def geckoterminal_daily(contract, chain):
+    """{"YYYY-MM-DD": USD volume} - the token's top GT_POOLS GeckoTerminal
+    pools' daily volume, summed per day (1 + GT_POOLS keyless calls), or {}
+    (unsupported chain, no pool, an error)."""
+    net = GT_NETWORKS.get((chain or "").lower())
+    if not net or not contract:
+        return {}
+    try:
+        pools = request("GET", f"{GT_BASE}/networks/{net}/tokens/{contract}/pools",
+                        params={"page": 1}, headers=GT_HEADERS).json().get("data") or []
+    except (Transient, ValueError, AttributeError):
+        return {}
+    out = {}
+    for p in pools[:GT_POOLS]:
+        try:
+            body = request("GET", f"{GT_BASE}/networks/{net}/pools/{p['attributes']['address']}/ohlcv/day",
+                           params={"limit": WINDOW_DAYS + 1, "currency": "usd", "token": contract},
+                           headers=GT_HEADERS).json()
+        except (Transient, ValueError, KeyError, TypeError):
+            continue                       # one pool failing keeps the other's days
+        for r in ((body.get("data") or {}).get("attributes") or {}).get("ohlcv_list") or []:
+            v = _opt(r[5]) if len(r) >= 6 else None
+            if v is not None:
+                d = datetime.fromtimestamp(r[0], tz=timezone.utc).date().isoformat()
+                out[d] = out.get(d, 0.0) + v
+    return out
+
+
+def fill_gaps(daily, fallback, source):
+    """Fill the days `daily` (fetch_from_codex) has as 0 / missing with a
+    fallback's volume ({date: USD}) - VOLUME only, buy / sell counts None,
+    "source" says where it came from. A fallback 0 never replaces Codex; no
+    Codex bars at all -> the fallback's own last WINDOW_DAYS complete days."""
+    blank = {"buys": None, "sells": None, "buyers": None, "sellers": None,
+             "buy_volume": None, "sell_volume": None, "transactions": None}
+    bars = daily["bars"]
+    if not bars:
+        today = _today_utc().isoformat()
+        bars = [{"date": d, **blank, "volume": v, "source": source}
+                for d, v in sorted(fallback.items()) if d < today][-WINDOW_DAYS:]
+        added = _sum(b["volume"] for b in bars)
+    else:
+        added = 0.0
+        for b in bars:
+            v = fallback.get(b["date"])
+            if not b.get("volume") and v:
+                b.update(blank, volume=v, source=source)
+                added += v
+    daily.update(bars=bars, vol_7d=_sum(b["volume"] for b in bars[-7:]),
+                 vol_total=_sum([daily.get("vol_total"), added]),
+                 since=daily.get("since") or (bars[0]["date"] if bars else None))
+    return daily
+
+
+def fetch_daily(contract, chain):
+    """fetch_from_codex + the GeckoTerminal fallback for the days Codex has as
+    0 / missing. A failed Codex request is returned as is (the cache keeps the
+    last bars - no fallback calls during a Codex outage)."""
+    daily, error = fetch_from_codex(contract, chain)
+    if error and _network(chain):
+        return daily, error
+    daily = daily or {"liq_now": None, "liq_7d_ago": None, "liq_7d_ago_date": None,
+                      "bars": [], "vol_7d": None, "vol_total": None, "since": None}
+    if daily["bars"] and all(b.get("volume") for b in daily["bars"]):
+        return daily, None
+    fallback = geckoterminal_daily(contract, chain)
+    if not any(fallback.values()):
+        return daily, (None if daily["bars"] else error)
+    return fill_gaps(daily, fallback, "geckoterminal"), None
+
+
+def keep_saved_days(new_bars, saved_bars):
+    """Zero protection: a day that comes back missing (volume None) keeps the
+    value saved earlier for that date - never replaced by None / a fake 0."""
+    old = {b["date"]: b for b in saved_bars or []}
+    return [old[b["date"]] if b.get("volume") is None and (old.get(b["date"]) or {}).get("volume") else b
+            for b in new_bars]
 
 
 def get_tx_bars(session, contract, chain):
@@ -176,10 +296,12 @@ def get_tx_bars(session, contract, chain):
     if row is not None and row.day == today and not stale_format:
         return {**cached, "error": None}
 
-    daily, error = fetch_from_codex(contract, chain)
+    daily, error = fetch_daily(contract, chain)
     if error:
         # Keep showing the last saved data rather than nothing if Codex failed.
         return {**(cached or empty), "error": error}
+    daily["bars"] = keep_saved_days(daily["bars"], (cached or {}).get("bars"))
+    daily["vol_7d"] = _sum(b["volume"] for b in daily["bars"][-7:])
 
     if row is None:
         row = TxBarsCache(chain=key_chain, contract=key_contract)

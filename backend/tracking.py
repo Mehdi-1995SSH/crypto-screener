@@ -199,6 +199,38 @@ def _store_trade_flows(session, coins, flows, today):
     return n
 
 
+SNAPSHOT_KEEP_DAYS = 45
+
+
+def prune_snapshots(session, today):
+    """Delete daily_snapshots older than SNAPSHOT_KEEP_DAYS (storage stays
+    small; every rule reads at most ~30 days) - EXCEPT, per existing coin,
+    the rows Performance Since Caught needs: its entry-day rows (active_since
+    +- performance.ENTRY_WINDOW_DAYS) and its highest- and lowest-price rows
+    since active_since. Returns rows deleted."""
+    from datetime import timedelta
+    from performance import ENTRY_WINDOW_DAYS
+    cutoff = today - timedelta(days=SNAPSHOT_KEEP_DAYS)
+    w = timedelta(days=ENTRY_WINDOW_DAYS)
+    keep = set()
+    for cid, since in (session.query(Coin.id, Coin.active_since)
+                       .filter(Coin.active_since.isnot(None), Coin.active_since < cutoff + w)):
+        d = since.date() if hasattr(since, "date") else since
+        keep |= {r[0] for r in session.query(DailySnapshot.id).filter(
+            DailySnapshot.coin_id == cid, DailySnapshot.date >= d - w, DailySnapshot.date <= d + w)}
+        priced = (session.query(DailySnapshot.id).filter(
+            DailySnapshot.coin_id == cid, DailySnapshot.date >= d,
+            DailySnapshot.price_usd.isnot(None), DailySnapshot.price_usd > 0))
+        for order in (DailySnapshot.price_usd.desc(), DailySnapshot.price_usd.asc()):   # high / low since caught
+            row = priced.order_by(order, DailySnapshot.date).first()
+            if row:
+                keep.add(row[0])
+    q = session.query(DailySnapshot).filter(DailySnapshot.date < cutoff)
+    if keep:
+        q = q.filter(~DailySnapshot.id.in_(keep))
+    return q.delete(synchronize_session=False)
+
+
 def _catch_up_categories(coins):
     """Look up a CoinGecko category for tracked coins that still have none
     (or a launch / backer label). At most CATCHUP_BUDGET live calls."""
@@ -351,6 +383,13 @@ def run_daily_tracking():
         except Exception as e:
             stats["trade_flows"] = 0
             print(f"[WARN] buy / sell volume not stored today: {str(e)[:120]}")
+        # Storage: snapshots older than SNAPSHOT_KEEP_DAYS - own savepoint too.
+        try:
+            with session.begin_nested():
+                stats["snapshots_pruned"] = prune_snapshots(session, today)
+        except Exception as e:
+            stats["snapshots_pruned"] = 0
+            print(f"[WARN] old snapshots not pruned today: {str(e)[:120]}")
         stats["category_lookups"] = _catch_up_categories(coins)
         from socials import refresh_twitter
         stats["twitter_calls"] = refresh_twitter(session, coins, now, counts=stats)
