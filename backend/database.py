@@ -242,6 +242,22 @@ _NEW_COLUMNS += [
 ]
 
 
+# Entry metrics (dual price gain, filter step 5b) + the stop-loss baseline.
+# Existing coins: entry_price = the first snapshot price on / after
+# active_since (what Performance Since Caught uses); the gain metrics stay
+# NULL (they only exist at entry time).
+_NEW_COLUMNS += [
+    ("coins", "entry_price", "FLOAT",
+     "UPDATE coins SET entry_price = (SELECT s.price_usd FROM daily_snapshots s "
+     "WHERE s.coin_id = coins.id AND s.price_usd > 0 AND s.date >= date(coins.active_since) "
+     "ORDER BY s.date, s.id LIMIT 1) WHERE entry_price IS NULL AND active_since IS NOT NULL"),
+    ("coins", "low_14d", "FLOAT", None),
+    ("coins", "low_60d", "FLOAT", None),
+    ("coins", "gain_from_14d_low", "FLOAT", None),
+    ("coins", "gain_from_60d_low", "FLOAT", None),
+]
+
+
 def _add_missing_columns():
     from sqlalchemy import inspect, text
 

@@ -52,6 +52,13 @@ class Coin(Base):
     # Holder count when it entered active: the baseline for drop_logic's
     # "holders down > 10%" check. None -> not enough history, check skipped.
     holders_at_entry = Column(Integer)
+    # Entry metrics (filter step 5b + the stop-loss baseline), set when the
+    # coin enters active (entry_price also on recovery).
+    entry_price = Column(Float)          # DexScreener price at entry (stop-loss baseline)
+    low_14d = Column(Float)              # CoinGecko 14-day low at entry
+    low_60d = Column(Float)              # CoinGecko 60-day low at entry (None: < 60 days of history)
+    gain_from_14d_low = Column(Float)    # % above the 14-day low at entry
+    gain_from_60d_low = Column(Float)    # % above the 60-day low at entry
     # CURRENT USD price (DexScreener, most-liquid pool). Refreshed on EVERY
     # daily run for active + dropped coins (tracking.py) - this is the
     # price the dashboard shows, never more than ~24h old.

@@ -6,7 +6,9 @@ Replaces the temporary "24h volume > $50K" placeholder. It runs right after
 the Age gate and, like age, is a CORE filter: unknown -> DROP.
 
 Source - CoinGecko market_chart by contract (uses COINGECKO_API_KEY):
-    /coins/{platform}/contract/{address}/market_chart?vs_currency=usd&days=7
+    /coins/{platform}/contract/{address}/market_chart?vs_currency=usd&days=60
+(hourly points, ~150 KB; one call). The same response feeds check_price_gain()
+(filter step 5b, the DUAL PRICE GAIN) - no extra call.
 `total_volumes` is CoinGecko's rolling-24h volume sampled through the window.
 We collapse it to one value per UTC day (the last reading of each day), then
 drop the current in-progress day and keep the last 5 COMPLETE days.
@@ -50,7 +52,11 @@ CG_MC_URL = ("https://api.coingecko.com/api/v3/coins/{platform}"
 CG_DELAY = 2.5       # be gentle with CoinGecko's demo rate limit
 WINDOW_DAYS = 5      # compare over the last 5 COMPLETE days
 VOLUME_MIN_RISE = 1.35   # day5 must be at least 35% above day1 to pass entry
-FETCH_DAYS = 7       # request extra to cover the partial start + today
+FETCH_DAYS = 60      # the price-gain step's 60-day low (volume uses the last 5 complete days)
+# DUAL PRICE GAIN (step 5b): the current price vs its 14-day / 60-day low.
+GAIN_14D_MAX = 30    # current price at most +30% above the 14-day low
+GAIN_60D_MAX = 50    # ... and at most +50% above the 60-day low (60+ days of history only)
+YOUNG_DAYS = 59      # first price point newer than this -> young: the 14-day rule only
 
 # This is the ONE-TIME entry check: rotation.py picks never-analyzed coins
 # (ROTATION_BUDGET per run); a coin is never checked here twice.
@@ -60,6 +66,8 @@ CALLS = 0
 
 # Per-process cache: fetch each coin's volume history at most once per run.
 _memo = {}
+# Per-process: each coin's CoinGecko [ms, price] points from the same response.
+_prices = {}
 # Coins whose check failed TRANSIENTLY this run (network error, 429 rate limit,
 # 5xx) - "unknown" for them means "couldn't ask", not "CoinGecko has nothing".
 _transient = set()
@@ -92,7 +100,9 @@ def get_daily_volumes(contract, chain, window=WINDOW_DAYS):
         if r.status_code != 200:
             _memo[key] = None          # coin not on CoinGecko by this contract
             return None
-        tv = r.json().get("total_volumes") or []
+        data = r.json()
+        tv = data.get("total_volumes") or []
+        _prices[key] = data.get("prices") or []
     except (requests.exceptions.RequestException, ValueError):
         _transient.add(key)            # network problem -> try again later
         return None
@@ -132,6 +142,34 @@ def check_volume_rising(contract, chain):
     verdict = "rising" if day5 >= day1 * VOLUME_MIN_RISE else "falling"
     return {"verdict": verdict, "volumes": vols, "day1": day1, "day5": day5,
             "transient": False}
+
+
+def check_price_gain(contract, chain):
+    """Step 5b - DUAL PRICE GAIN, from the volume step's CoinGecko response (0
+    extra calls): the current price vs the lowest price of the last 14 days
+    (and of the last 60 days when the coin has 60 days of history).
+        pass: 0% <= gain_from_14d_low <= GAIN_14D_MAX and
+              (young or 0% <= gain_from_60d_low <= GAIN_60D_MAX)
+        fail: otherwise;  unknown: no CoinGecko prices (-> DROP, like volume)
+    Returns {"verdict", "current", "low_14d", "low_60d", "gain_14d", "gain_60d", "young"}."""
+    platform = CHAIN_TO_CG_PLATFORM.get((chain or "").lower())
+    key = (platform, (contract or "").lower())
+    if key not in _prices and key not in _transient:
+        get_daily_volumes(contract, chain)                 # normally already fetched by step 5
+    pts = [(p[0] / 1000, p[1]) for p in _prices.get(key, []) if len(p) >= 2 and p[1] and p[1] > 0]
+    out = {"verdict": "unknown", "current": None, "low_14d": None, "low_60d": None,
+           "gain_14d": None, "gain_60d": None, "young": None}
+    if not pts:
+        return out
+    now, cur = pts[-1]
+    low14 = min(p for ts, p in pts if ts >= now - 14 * 86400)
+    young = pts[0][0] > now - YOUNG_DAYS * 86400
+    low60 = None if young else min(p for _, p in pts)
+    g14 = (cur - low14) / low14 * 100
+    g60 = None if young else (cur - low60) / low60 * 100
+    ok = 0 <= g14 <= GAIN_14D_MAX and (young or 0 <= g60 <= GAIN_60D_MAX)
+    return {**out, "verdict": "pass" if ok else "fail", "current": cur, "low_14d": low14, "low_60d": low60,
+            "gain_14d": round(g14, 2), "gain_60d": None if g60 is None else round(g60, 2), "young": young}
 
 
 # ---------------------------------------------------------------------------
