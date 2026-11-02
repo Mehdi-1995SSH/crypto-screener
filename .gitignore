@@ -25,3 +25,6 @@ Thumbs.db
 .DS_Store
 .vscode/
 .idea/
+
+# ===== Local Claude Code settings (preview servers) =====
+.claude/

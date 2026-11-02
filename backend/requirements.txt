@@ -5,3 +5,4 @@ apscheduler
 sqlalchemy
 python-dotenv
 psycopg[binary]
+tenacity

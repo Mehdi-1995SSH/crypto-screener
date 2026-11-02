@@ -180,7 +180,7 @@ def run_check(contract):
     from liquidity_check import check_liquidity_trend, MAX_DROP_PCT, MIN_LIQUIDITY_USD
     from narrative_check import _pick_category
     from queue_view import narrative_from_tags
-    from tx_bars import fetch_from_codex
+    from tx_bars import fetch_daily
     from revenue_detail import fetch as fetch_revenue
     from price_range import from_market_data
     from socials import handle_from, handle_from_cmc, x_url
@@ -231,7 +231,7 @@ def run_check(contract):
         return live_sources(chain, contract, _num(dex_rec.get("liquidity_usd")),
                             f_liq.result().get("today_liq"))
     f_src = pool.submit(sources_live)
-    f_tx = pool.submit(fetch_from_codex, contract, chain)
+    f_tx = pool.submit(fetch_daily, contract, chain)
     from entry_zone import build as entry_zone_build
     # A coin we track: the detail page's own Entry Zone (stored history,
     # re-evaluated every 3 days) - no live Codex fetch needed for it.
@@ -692,7 +692,7 @@ def rules_signature():
     from volume_check import VOLUME_MIN_RISE
     from liquidity_check import MAX_DROP_PCT, MIN_LIQUIDITY_USD
     return (f"mcap {MIN_MCAP}-{MAX_MCAP}|age {MIN_AGE_DAYS}|vol {VOLUME_MIN_RISE}|liq {MAX_DROP_PCT}/{MIN_LIQUIDITY_USD}"
-            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3"
+            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb"
             "|liq3src|liq3k|score-v3")   # result layout: has these display sections
 
 

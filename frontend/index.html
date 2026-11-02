@@ -356,6 +356,7 @@
   .bar .s { background: var(--sell); border-radius: 4px 4px 0 0; }   /* top segment: rounded data-end */
   .bar .b { background: var(--buy); }
   .bar .s.only, .bar .b.only { border-radius: 4px 4px 0 0; }
+  .bar .v { background: var(--accent); border-radius: 4px 4px 0 0; }   /* volume-only day (GeckoTerminal) */
   .bar:hover .stack, .bar.on .stack, .bar:focus-visible .stack { filter: brightness(1.2); }
   .xlabels { display: flex; gap: 2px; margin-left: 44px; margin-top: 4px; }
   .xlabels span { flex: 1 1 0; min-width: 0; text-align: center; font-size: 10px; color: var(--muted); white-space: nowrap; overflow: visible; }
@@ -1777,14 +1778,18 @@
   // day's buy:sell count ratio. Hover or tap a bar for all 6 values.
   function txChart(c, pid = "tx") {
     const bars = c.tx_bars || [];
+    // Days filled from GeckoTerminal (Codex had 0 / nothing) carry volume only -> the chart shows volume.
+    const volMode = bars.some(b => b.source && b.source !== "codex");
+    const val = b => volMode ? (b.volume || 0) : (b.transactions || (b.buys || 0) + (b.sells || 0));
     const head = `<h3>Transactions</h3>
       <div class="note">Last ${bars.length} complete day${bars.length === 1 ? "" : "s"}
         ${bars.length < c.tx_window_days ? "(since the coin started trading)" : ""} ·
-        bar height = total transactions · hover or tap a bar for details</div>`;
+        ${volMode ? "bar height = volume (USD) · some days from GeckoTerminal (volume only, no buy / sell counts)"
+                  : "bar height = total transactions"} · hover or tap a bar for details</div>`;
     if (!bars.length) {
       return `<div class="chartcard">${head}<div class="empty">${esc(c.tx_error || "No transaction data for this coin.")}</div></div>`;
     }
-    const max = Math.max(1, ...bars.map(b => b.transactions || (b.buys + b.sells)));
+    const max = Math.max(1, ...bars.map(val));
     const step = niceStep(max);
     const top = Math.ceil(max / step) * step;
     let grid = "";
@@ -1792,15 +1797,16 @@
       grid += `<div class="grid" style="bottom:${(v / top) * 100}%"><span>${fmtCompact(v)}</span></div>`;
     }
     const cols = bars.map((b, i) => {
-      const total = b.transactions || (b.buys + b.sells);
-      const counted = b.buys + b.sells;
+      const total = val(b);
+      const counted = volMode ? 0 : (b.buys || 0) + (b.sells || 0);
       const h = (total / top) * 100;
       const buyPart = counted ? b.buys / counted : 0;
       const sell = counted ? 1 - buyPart : 0;
       const segs = [];
+      if (volMode && total > 0) segs.push(`<div class="v only" style="flex:1 1 0"></div>`);
       if (sell > 0) segs.push(`<div class="s${buyPart === 0 ? " only" : ""}" style="flex:${sell} 1 0"></div>`);
       if (buyPart > 0) segs.push(`<div class="b${sell === 0 ? " only" : ""}" style="flex:${buyPart} 1 0"></div>`);
-      return `<div class="bar" tabindex="0" data-i="${i}" aria-label="${esc(b.date)}: ${b.buys} buys, ${b.sells} sells">
+      return `<div class="bar" tabindex="0" data-i="${i}" aria-label="${esc(b.date)}: ${volMode ? fmtUsd(b.volume) + " volume" : `${fmtInt(b.buys)} buys, ${fmtInt(b.sells)} sells`}">
                 <div class="stack" style="height:${h}%">${segs.join("")}</div></div>`;
     }).join("");
     // Label every bar only when there's room for "Sep 20"-style text.
@@ -1811,7 +1817,7 @@
       <td class="num">${fmtUsd(b.buy_volume)}</td><td class="num">${fmtUsd(b.sell_volume)}</td>
       <td class="num">${fmtUsd(b.volume)}</td><td class="num">${fmtInt(b.transactions)}</td></tr>`).join("");
     return `<div class="chartcard">${head}
-      <div class="legend"><span><i style="background:var(--buy)"></i>Buys</span><span><i style="background:var(--sell)"></i>Sells</span></div>
+      ${volMode ? "" : `<div class="legend"><span><i style="background:var(--buy)"></i>Buys</span><span><i style="background:var(--sell)"></i>Sells</span></div>`}
       <div class="plot" id="${pid}plot">${grid}<div class="bars">${cols}</div><div class="tip" id="${pid}tip"></div></div>
       <div class="xlabels">${xl}</div>
       <details class="tbl"><summary>Show as table</summary><div class="card"><table>
@@ -1837,7 +1843,8 @@
         <div class="row"><span>Buy volume</span><span>${fmtUsd(b.buy_volume)}</span></div>
         <div class="row"><span>Sell volume</span><span>${fmtUsd(b.sell_volume)}</span></div>
         <div class="row"><span>Total volume</span><span>${fmtUsd(b.volume)}</span></div>
-        <div class="row"><span>Total transactions</span><span>${fmtInt(b.transactions)}</span></div>`;
+        <div class="row"><span>Total transactions</span><span>${fmtInt(b.transactions)}</span></div>
+        ${b.source && b.source !== "codex" ? `<div class="row"><span>Source</span><span>GeckoTerminal (volume only)</span></div>` : ""}`;
       tip.style.display = "block";
       // Beside the bar (right of it, or left near the right edge), so the
       // tooltip never covers the bar being read.
