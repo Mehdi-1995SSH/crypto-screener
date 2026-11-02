@@ -43,6 +43,14 @@ jobs:
   hourly-prices:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Shared with daily.yml's pipeline job: this update waits while the daily
+    # run adds / deletes coins (only this job - not the chain's 59-minute wait,
+    # which would hold the daily run back). Each workflow runs one at a time
+    # (its own concurrency group), so at most one job of each waits here and a
+    # waiting daily run is never cancelled by a newer hourly one.
+    concurrency:
+      group: coins-writers
+      cancel-in-progress: false
     outputs:
       skipped: ${{ steps.update.outputs.skipped }}
     steps:

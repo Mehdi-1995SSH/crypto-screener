@@ -17,6 +17,11 @@ concurrency:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    # Shared with hourly-prices.yml's update job: the hourly price write never
+    # runs while this job adds / deletes coins (it waits; StaleDataError fix).
+    concurrency:
+      group: coins-writers
+      cancel-in-progress: false
     # STOPGAP: runs currently take ~60-80+ min (drop_logic re-checks and
     # rank_check scale with the active + dropped lists). Raised from 60 so a
     # run isn't killed half-way; revisit once the per-coin daily checks are
