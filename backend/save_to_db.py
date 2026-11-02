@@ -54,6 +54,7 @@ from discovery import discover_tokens   # steps 1-2: discovery + meme/stablecoin
                                         # (DexScreener only enriches by contract)
 from age_check import decide_age                    # step 3
 from fetch_dexscreener import buyers_ok             # step 3b
+from filter_eval import log_rejection, log_entry    # 5-day self-evaluation (Telegram)
 from queue_view import remember_queue_display
 from revenue_check import check_revenue             # step 4
 from volume_check import check_volume_rising, check_price_gain   # steps 5 + 5b
@@ -294,12 +295,14 @@ def save_tokens(tokens):
                     stats["skipped_no_age"] += 1     # unknown on DS + CG + CMC
                 else:
                     stats["skipped_too_new"] += 1    # younger than 10 days
+                    log_rejection(session, {**t, "age_days": age_days}, "age_10d", date.today())
                 continue
             stats["passed_age"] += 1
             # --- Step 3b: 24h BUYERS (DexScreener txns from discovery, 0 calls) --
             # Before the queue, so a skipped coin is re-checked next run.
             if not buyers_ok(t):
                 stats["skipped_sellers"] += 1
+                log_rejection(session, t, "buyers_24h", date.today())
                 continue
             age_passed.append(t)
 
@@ -326,6 +329,7 @@ def save_tokens(tokens):
                                     t["contract"], t["chain"])
             if revenue["verdict"] == "NO_REVENUE":
                 stats["skipped_no_revenue"] += 1
+                log_rejection(session, t, "revenue", date.today())
                 continue
             if revenue["verdict"] == "HAS_REVENUE":
                 stats["revenue_has"] += 1
@@ -348,6 +352,7 @@ def save_tokens(tokens):
                     stats["skipped_vol_falling"] += 1
                 else:
                     stats["skipped_vol_unknown"] += 1
+                log_rejection(session, t, "volume_35", date.today())
                 continue
             stats["passed_volume"] += 1
 
@@ -357,6 +362,7 @@ def save_tokens(tokens):
             gain = check_price_gain(t["contract"], t["chain"])
             if gain["verdict"] != "pass":
                 stats["skipped_price_gain"] += 1
+                log_rejection(session, t, "price_gain", date.today(), gain)
                 continue
             stats["passed_price_gain"] += 1
             t["_price_gain"] = gain
@@ -369,9 +375,11 @@ def save_tokens(tokens):
             security = check_token_security(t["contract"], t["chain"])
             if security["verdict"] == "unsafe":
                 stats["skipped_unsafe"] += 1
+                log_rejection(session, t, "security", date.today())
                 continue
             if rejects(security):
                 stats["skipped_unverified"] += 1
+                log_rejection(session, t, "security", date.today())
                 continue
             if security["verdict"] == "unknown":
                 stats["security_unknown"] += 1
@@ -383,6 +391,7 @@ def save_tokens(tokens):
             liq = check_liquidity_trend(t["contract"], t["chain"])
             if liq["verdict"] == "drop":
                 stats["skipped_liq_falling"] += 1
+                log_rejection(session, t, "liquidity", date.today())
                 continue
             if liq["verdict"] == "unknown":
                 stats["liquidity_unknown"] += 1
@@ -396,6 +405,7 @@ def save_tokens(tokens):
                           {"birdeye"} if be["status"] == "error" else ())
             if ev["verdict"] not in (HEALTHY, UNKNOWN):
                 stats["skipped_thin"] += 1
+                log_rejection(session, t, "liquidity", date.today())
                 print(f"[INFO] {t.get('name') or t['contract']}: not saved - {ev['reason']} ({describe(ev)})")
                 continue
             t["_birdeye"] = be
@@ -435,6 +445,7 @@ def save_tokens(tokens):
                 session.add(coin)
                 session.flush()  # flush so the new coin gets its id now
                 stats["new_coins"] += 1
+                log_entry(session, t, coin, date.today())
             else:
                 # It qualified again -> mark it as a legitimate opportunity.
                 # Status is never changed here: the filter only brings NEW
