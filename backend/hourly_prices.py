@@ -207,10 +207,14 @@ def run():
                     stats["insane" if p is not None else "missing"] += 1
                     log.info("%s: skipped (%s)", c.name, f"codex {p:.6g} vs daily {c.price_usd:.6g}" if p is not None else "no price")
         if updates or raw_cmc:
-            if updates:
-                session.bulk_update_mappings(Coin, updates)
-            if raw_cmc:
-                session.bulk_update_mappings(Coin, raw_cmc)
+            # Plain UPDATE ... WHERE id = per coin, not bulk_update_mappings: a
+            # coin the daily job deleted meanwhile just matches 0 rows instead
+            # of raising StaleDataError and losing every other coin's price.
+            from sqlalchemy import update
+            for row in raw_cmc + updates:
+                session.execute(update(Coin).where(Coin.id == row["id"])
+                                .values({k: v for k, v in row.items() if k != "id"})
+                                .execution_options(synchronize_session=False))
             session.commit()
         stats["updated"] = len(updates)
     except Exception as e:
