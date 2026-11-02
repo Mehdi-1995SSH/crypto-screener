@@ -20,6 +20,7 @@ The filter steps reuse the pipeline's own functions, in the pipeline's order:
                                  bulk downloads.
   3. Age >= 10 days              age_check.decide_age (DexScreener pool age,
                                  else CMC date_added / CMC info)
+  3b. 24h buys > sells           fetch_dexscreener.buyers_ok (DexScreener txns)
   4. Revenue                     revenue_check.check_revenue (only a confirmed
                                  NO_REVENUE fails)
   5. Volume +35% over 5 days     volume_check.check_volume_rising
@@ -170,7 +171,7 @@ def run_check(contract):
         contract = pairs[0]["baseToken"]["address"]
 
     from discovery import MIN_MCAP, MAX_MCAP
-    from fetch_dexscreener import build_token_records
+    from fetch_dexscreener import build_token_records, buyers_ok
     from meme_filter import (classify_excluded, looks_like_stablecoin, CG_MEME_CATEGORIES,
                              CG_STABLECOIN_CATEGORIES, CG_TOKENIZED_CATEGORIES,
                              CG_WRAPPED_CATEGORIES, WRAPPED_KEEP_CG_IDS)
@@ -309,6 +310,16 @@ def run_check(contract):
              f"العمر أقل من {_ltr(MIN_AGE_DAYS)} أيام (العمر الحالي: {_ltr(age_days)} يوم)")
     else:
         step("age", "Age ≥ 10 days", "pass", f"{age_days} days ({age_src})")
+
+    # 3b. 24h buyers (DexScreener txns over the token's pools on this chain - no extra call)
+    b, sl = dex_rec.get("buys_24h") or 0, dex_rec.get("sells_24h") or 0
+    if not (b or sl):
+        step("buyers", "24h buys > sells", "pass", "no DexScreener transactions - passes")
+    elif buyers_ok(dex_rec):
+        step("buyers", "24h buys > sells", "pass", f"{b:,} buys vs {sl:,} sells")
+    else:
+        step("buyers", "24h buys > sells", "fail", f"{b:,} buys vs {sl:,} sells (re-checked daily)",
+             f"البائعون لا يقلّون عن المشترين خلال 24 ساعة ({_ltr(f'{b:,} شراء مقابل {sl:,} بيع')})")
 
     # 4. Revenue
     rev, revd = f_rev.result()
@@ -708,7 +719,7 @@ def rules_signature():
     from volume_check import VOLUME_MIN_RISE
     from liquidity_check import MAX_DROP_PCT, MIN_LIQUIDITY_USD
     return (f"mcap {MIN_MCAP}-{MAX_MCAP}|age {MIN_AGE_DAYS}|vol {VOLUME_MIN_RISE}|liq {MAX_DROP_PCT}/{MIN_LIQUIDITY_USD}"
-            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb|gain1"
+            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb|gain1|buyers1"
             "|liq3src|liq3k|score-v3")   # result layout: has these display sections
 
 

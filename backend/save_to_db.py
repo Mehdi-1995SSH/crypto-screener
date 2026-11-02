@@ -11,6 +11,10 @@ THE FILTER - exactly these 7 steps, in this order:
        Stablecoin   (meme_filter.py).
     3. Age        - >= 10 days; DexScreener pairCreatedAt, else CMC listing
                     date; too new or unknown -> DROP (age_check.py).
+    3b. Buyers    - DexScreener 24h txns from discovery (0 calls): buys > sells
+                    (no data / 0 / 0 passes). BEFORE the queue: a coin with
+                    sells >= buys is only skipped today and re-checked next run
+                    (never marked analyzed - no 15-day lock-out).
     -- ROTATION QUEUE (rotation.py): steps 4-7 run only on ROTATION_BUDGET
        age-passers per run, first-come-first-served; the rest wait. --
     4. Revenue    - DefiLlama; DROP only on confirmed NO_REVENUE.
@@ -49,6 +53,7 @@ from models import Coin, DailySnapshot
 from discovery import discover_tokens   # steps 1-2: discovery + meme/stablecoin
                                         # (DexScreener only enriches by contract)
 from age_check import decide_age                    # step 3
+from fetch_dexscreener import buyers_ok             # step 3b
 from queue_view import remember_queue_display
 from revenue_check import check_revenue             # step 4
 from volume_check import check_volume_rising, check_price_gain   # steps 5 + 5b
@@ -218,6 +223,7 @@ def save_tokens(tokens):
         "discovered": len(tokens),
         "passed_age": 0,
         "skipped_too_new": 0,
+        "skipped_sellers": 0,        # step 3b: sells >= buys today -> re-checked next run
         "skipped_no_age": 0,
         "age_via_fallback": 0,   # CG/CMC fallback was used for the age decision
         "age_deferred": 0,       # fallback lookup budget used up -> next run
@@ -290,6 +296,11 @@ def save_tokens(tokens):
                     stats["skipped_too_new"] += 1    # younger than 10 days
                 continue
             stats["passed_age"] += 1
+            # --- Step 3b: 24h BUYERS (DexScreener txns from discovery, 0 calls) --
+            # Before the queue, so a skipped coin is re-checked next run.
+            if not buyers_ok(t):
+                stats["skipped_sellers"] += 1
+                continue
             age_passed.append(t)
 
         # --- ENTRY QUEUE (rotation.py) --------------------------------------
@@ -556,6 +567,7 @@ def print_summary(stats):
     print(f"       - dropped (too new, <10d) ............. {stats['skipped_too_new']:>6}")
     print(f"       - dropped (age unknown) ............... {stats['skipped_no_age']:>6}")
     print(f"       - age lookup postponed to next run .... {stats['age_deferred']:>6}")
+    print(f"  3b. 24h buys > sells - skipped today ....... {stats['skipped_sellers']:>6}")
     print(sub)
     print(f"  ENTRY QUEUE (never-analyzed coins, budget {ROTATION_BUDGET}/run):")
     print(f"       first seen this run ................... {stats['queue_new']:>6}")

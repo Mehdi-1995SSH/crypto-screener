@@ -397,6 +397,14 @@ def fetch_pairs_for_candidates(candidates):
 # ---------------------------------------------------------------------------
 # Turn raw pairs into one clean record per token
 # ---------------------------------------------------------------------------
+def buyers_ok(rec):
+    """Entry step 3b: more 24h buys than sells (buys_24h / sells_24h from
+    build_token_records). No transaction data (missing or 0 / 0) passes -
+    only a positive signal keeps a coin out."""
+    b, s = rec.get("buys_24h") or 0, rec.get("sells_24h") or 0
+    return (b == 0 and s == 0) or b > s
+
+
 def build_token_records(pairs, keep_addresses=None):
     """
     Group raw pairs by token and summarise each into a single record.
@@ -428,6 +436,8 @@ def build_token_records(pairs, keep_addresses=None):
         # Sum liquidity & 24h volume across all of the token's pools.
         total_liquidity = sum(liquidity_usd(p) for p in token_pairs)
         total_volume_24h = sum((p.get("volume") or {}).get("h24") or 0 for p in token_pairs)
+        # 24h transactions over the same pools (the entry filter's buyer check).
+        h24 = [((p.get("txns") or {}).get("h24") or {}) for p in token_pairs]
 
         # Age = how long ago the OLDEST pool was created (first seen).
         created_times = [p.get("pairCreatedAt") for p in token_pairs if p.get("pairCreatedAt")]
@@ -445,6 +455,8 @@ def build_token_records(pairs, keep_addresses=None):
             "pair_created_at": oldest_created,
             "age_days": age_in_days(oldest_created),
             "num_pools": len(token_pairs),
+            "buys_24h": sum(t.get("buys") or 0 for t in h24),
+            "sells_24h": sum(t.get("sells") or 0 for t in h24),
         })
 
     return tokens
