@@ -23,6 +23,7 @@ The filter steps reuse the pipeline's own functions, in the pipeline's order:
   4. Revenue                     revenue_check.check_revenue (only a confirmed
                                  NO_REVENUE fails)
   5. Volume +35% over 5 days     volume_check.check_volume_rising
+  5b. Price gain                 volume_check.check_price_gain (same response)
   6. Honeypot                    security_check.check_token_security
   7. Liquidity not down > 5%     liquidity_check.check_liquidity_trend
 All steps run (for the numbers); the verdict is the FIRST step that fails.
@@ -175,7 +176,7 @@ def run_check(contract):
                              CG_WRAPPED_CATEGORIES, WRAPPED_KEEP_CG_IDS)
     from age_check import decide_age, MIN_AGE_DAYS
     from revenue_check import check_revenue
-    from volume_check import check_volume_rising, VOLUME_MIN_RISE
+    from volume_check import check_volume_rising, check_price_gain, VOLUME_MIN_RISE, GAIN_14D_MAX, GAIN_60D_MAX
     from security_check import check_token_security, rejects, SECURITY_COLUMNS
     from liquidity_check import check_liquidity_trend, MAX_DROP_PCT, MIN_LIQUIDITY_USD
     from narrative_check import _pick_category
@@ -333,6 +334,21 @@ def run_check(contract):
     else:
         step("volume", "Volume up ≥ 35% over 5 days", "fail", "no CoinGecko volume history",
              f"لا يوجد سجل حجم على {_ltr('CoinGecko')} لهذا العقد (الفلتر يحتاج 5 أيام)")
+
+    # 5b. Dual price gain (the same CoinGecko response - no extra call)
+    pg = check_price_gain(contract, chain)
+    label = f"Price ≤ +{GAIN_14D_MAX}% above 14-day low (≤ +{GAIN_60D_MAX}% above 60-day low)"
+    if pg["verdict"] == "unknown":
+        detail = "no CoinGecko price history"
+    else:
+        detail = f"{pg['gain_14d']:+.0f}% vs 14d low" + (" (under 60 days of history)" if pg["young"]
+                                                       else f", {pg['gain_60d']:+.0f}% vs 60d low")
+    if pg["verdict"] == "pass":
+        step("price_gain", label, "pass", detail)
+    elif pg["verdict"] == "fail":
+        step("price_gain", label, "fail", detail, f"السعر بعيد جداً عن أدنى مستوى له ({_ltr(detail)})")
+    else:
+        step("price_gain", label, "fail", detail, f"لا يوجد سجل سعر على {_ltr('CoinGecko')} لهذا العقد")
 
     # 6. Honeypot
     sec = f_sec.result()
@@ -692,7 +708,7 @@ def rules_signature():
     from volume_check import VOLUME_MIN_RISE
     from liquidity_check import MAX_DROP_PCT, MIN_LIQUIDITY_USD
     return (f"mcap {MIN_MCAP}-{MAX_MCAP}|age {MIN_AGE_DAYS}|vol {VOLUME_MIN_RISE}|liq {MAX_DROP_PCT}/{MIN_LIQUIDITY_USD}"
-            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb"
+            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb|gain1"
             "|liq3src|liq3k|score-v3")   # result layout: has these display sections
 
 

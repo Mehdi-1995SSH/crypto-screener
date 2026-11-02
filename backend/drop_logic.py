@@ -19,6 +19,9 @@ It uses ONE set of 5 health criteria, both for dropping and for recovery:
     * holders down > 10%  - vs the count when it entered active
                             (coins.holders_at_entry; no baseline -> skipped)
     * honeypot unsafe     - GoPlus (EVM) / RugCheck (Solana); the fields are re-saved daily
+    * stop-loss           - price 15%+ below coins.entry_price: dropped from
+                            day 1 (before grace); its recovery also needs a
+                            +5% rebound and buyers > sellers (STOP-LOSS below)
 Volume + liquidity come ONLY from the daily readings that tracking.py stores
 (CoinGecko / CMC volume from discovery, ~2-3 bulk Codex requests/day for all
 coins, plus DexScreener) - no extra API calls here.
@@ -97,6 +100,15 @@ VOLUME_AVG_DAYS = 5          # 5-day averages
 VOLUME_AVG_FALL_PCT = 35     # falling = the newer average 35% or more lower
 VOLUME_MIN_AVG_USD = 2_000   # the last 5-day average under this (USD / day) = too low
 VOLUME_CG_LOOKBACK_DAYS = 14 # CoinGecko readings come from at most the last 14 days
+# STOP-LOSS: price STOP_LOSS_PCT or more below coins.entry_price (the price
+# when it entered active; reset on recovery) -> dropped at once, EVEN IN GRACE,
+# then the 7-day recovery window. Price = coins.price_usd (today's daily
+# DexScreener price, the same source as entry_price). A stop-loss drop
+# recovers only when ALL hold: price STOP_LOSS_REBOUND_PCT+ above its price on
+# the drop day, buyers dominating the latest Codex day (buys > sells by count
+# or volume), and the usual recovery checks (liquidity, volume, holders, ...).
+STOP_LOSS_PCT = 15
+STOP_LOSS_REBOUND_PCT = 5
 # LIQUIDITY DOWN SINCE ENTRY: unhealthy only when liquidity is more than this
 # below its level when the coin entered active (5-15% is normal movement).
 # TWO SOURCES must agree (like the crash check): Codex AND DexScreener each
@@ -346,6 +358,38 @@ def _remove_for_good(session, coin, snap_day, ev, now, stats, removed_liq, crash
     return True
 
 
+def stop_loss_reason(coin):
+    """The stop-loss drop reason, or None (fine, or no entry / current price)."""
+    if not coin.entry_price or not coin.price_usd:
+        return None
+    pct = (coin.price_usd / coin.entry_price - 1) * 100
+    if pct <= -STOP_LOSS_PCT:
+        return f"Stop-loss - price {pct:+.1f}% vs entry ${coin.entry_price:.6g}"
+    return None
+
+
+def stop_loss_recovery(session, coin, dropped_at, today):
+    """True when a stop-loss drop's own recovery conditions hold: price at
+    least STOP_LOSS_REBOUND_PCT above its price on the drop day, and buyers
+    dominating the latest Codex day (trade_flows, today or yesterday)."""
+    from models import TradeFlow
+    drop_day = dropped_at.date() if hasattr(dropped_at, "date") else dropped_at
+    snap = (session.query(DailySnapshot.price_usd)
+            .filter(DailySnapshot.coin_id == coin.id, DailySnapshot.date <= drop_day,
+                    DailySnapshot.price_usd > 0)
+            .order_by(DailySnapshot.date.desc()).first())
+    rebound = bool(snap and coin.price_usd
+                   and coin.price_usd >= snap[0] * (1 + STOP_LOSS_REBOUND_PCT / 100))
+    flow = (session.query(TradeFlow)
+            .filter(TradeFlow.chain == (coin.chain or "").lower(),
+                    TradeFlow.contract == (coin.contract or "").lower(),
+                    TradeFlow.day >= today - timedelta(days=1))
+            .order_by(TradeFlow.day.desc()).first())
+    buyers = bool(flow and ((flow.buy_count or 0) > (flow.sell_count or 0)
+                            or (flow.buy_volume or 0) > (flow.sell_volume or 0)))
+    return rebound and buyers
+
+
 def in_grace(coin, today):
     """True during the coin's first GRACE_DAYS calendar days in active."""
     since = coin.active_since or coin.first_seen
@@ -507,7 +551,7 @@ def run_drop_logic():
     stats = {"active_remaining": 0, "in_grace": 0, "checked": 0, "newly_dropped": 0, "crashed": 0,
              "crash_blocked": 0, "recovered": 0, "still_dropped": 0, "removed_7d": 0,
              "removed_never_qualified": 0, "removed_liquidity": 0, "liq_dropped": 0, "liq_unknown": 0,
-             "crash_24h": 0, "price_mismatch": 0}
+             "crash_24h": 0, "price_mismatch": 0, "stop_loss": 0}
     price_mm = []                # (name, source_a, a, source_b, b, ratio) - price mismatch, removed for good
     crashed_24h = []             # (name, {source: %} or None, (price %, src) or None) - removed for good
     removed_liq = []             # (name, reason, readings) - 3-source removals, for good
@@ -548,6 +592,9 @@ def run_drop_logic():
             elif ev["verdict"] == DROPPED:
                 reason = f"{ev['reason']} ({describe(ev)})"
                 stats["liq_dropped"] += 1
+            elif stop_loss_reason(coin):                   # BEFORE grace: applies from day 1
+                reason = stop_loss_reason(coin)
+                stats["stop_loss"] += 1
             elif in_grace(coin, today):
                 stats["in_grace"] += 1
                 continue
@@ -605,6 +652,8 @@ def run_drop_logic():
                 if not ok:
                     healthy = False
                     held_details.append((coin.name, now_liq, peak))
+            if healthy and last and (last[1] or "").startswith("Stop-loss"):
+                healthy = stop_loss_recovery(session, coin, last[0], today)   # + rebound and buyers
             if healthy:
                 # all 4 healthy -> RECOVER
                 session.query(DroppedCoin).filter_by(coin_id=coin.id).delete(
@@ -613,6 +662,7 @@ def run_drop_logic():
                 coin.status = "active"
                 coin.ever_qualified = True
                 coin.active_since = now                    # fresh 5-day grace
+                coin.entry_price = coin.price_usd          # fresh stop-loss baseline
                 coin.holders_at_entry = h if isinstance(h, int) else None
                 stats["recovered"] += 1
                 recovered_details.append(coin.name)

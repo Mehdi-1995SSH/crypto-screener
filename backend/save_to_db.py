@@ -16,7 +16,11 @@ THE FILTER - exactly these 7 steps, in this order:
     4. Revenue    - DefiLlama; DROP only on confirmed NO_REVENUE.
     5. Volume     - CoinGecko 5 complete days, day5 >= day1 x 1.35 (+35%); less or
                     unknown -> DROP (volume_check.py).
-    6. Honeypot   - GoPlus; DROP only on confirmed unsafe. After volume
+    5b. Price gain - same CoinGecko response (0 calls): price at most +30%
+                    above its 14-day low and (60+ days of history) +50% above
+                    its 60-day low - not chasing a pump (check_price_gain).
+    6. Honeypot   - GoPlus / RugCheck; DROP on unsafe, or unverified on a
+                    supported chain (security_check.rejects). After volume
                     because free GoPlus is rate-limited (~20-30 calls/min).
     7. Liquidity  - Codex daily liquidity over min(30d, age); down > 5% ->
                     DROP; unknown -> PASS (liquidity_check.py). LAST step.
@@ -47,7 +51,7 @@ from discovery import discover_tokens   # steps 1-2: discovery + meme/stablecoin
 from age_check import decide_age                    # step 3
 from queue_view import remember_queue_display
 from revenue_check import check_revenue             # step 4
-from volume_check import check_volume_rising       # step 5
+from volume_check import check_volume_rising, check_price_gain   # steps 5 + 5b
 from rotation import (pick_batch, mark_checked, analyzed_keys, is_analyzed,
                       ROTATION_BUDGET)              # entry queue for steps 4-7
 from security_check import check_token_security, rejects, store as store_security     # step 6 (honeypot)
@@ -228,6 +232,8 @@ def save_tokens(tokens):
         "queue_picked": 0,           # got the expensive steps this run
         "queue_waiting": 0,          # waiting for a later run
         "vol_retry_next_run": 0,     # CoinGecko failed transiently -> retried
+        "passed_price_gain": 0,      # step 5b: dual price gain (14d / 60d low)
+        "skipped_price_gain": 0,     # too far above the 14d / 60d low (chasing)
         "passed_liquidity": 0,       # Codex liquidity trend (step 7)
         "skipped_liq_falling": 0,    # down more than 5% over the window
         "liquidity_unknown": 0,      # no Codex data -> passed, not dropped
@@ -334,6 +340,16 @@ def save_tokens(tokens):
                 continue
             stats["passed_volume"] += 1
 
+            # --- Step 5b: DUAL PRICE GAIN (same CoinGecko response, 0 calls) --
+            # Not chasing: price <= +30% above the 14-day low and (with 60
+            # days of history) <= +50% above the 60-day low.
+            gain = check_price_gain(t["contract"], t["chain"])
+            if gain["verdict"] != "pass":
+                stats["skipped_price_gain"] += 1
+                continue
+            stats["passed_price_gain"] += 1
+            t["_price_gain"] = gain
+
             # --- Step 6: honeypot / security check (GoPlus / RugCheck) -----
             # Placed AFTER volume: free GoPlus is rate-limited, so it runs on
             # the small volume-passing set. Rejects an unsafe coin AND an
@@ -398,6 +414,12 @@ def save_tokens(tokens):
                     # first_seen and active_since default to now.
                     # Baseline for drop_logic's "holders down > 10%" check.
                     holders_at_entry=holder_num,
+                    # Entry metrics: the stop-loss baseline (the DexScreener
+                    # price tracking.py refreshes - one source) + step 5b's numbers.
+                    entry_price=price,
+                    low_14d=t["_price_gain"]["low_14d"], low_60d=t["_price_gain"]["low_60d"],
+                    gain_from_14d_low=t["_price_gain"]["gain_14d"],
+                    gain_from_60d_low=t["_price_gain"]["gain_60d"],
                 )
                 session.add(coin)
                 session.flush()  # flush so the new coin gets its id now
@@ -549,6 +571,8 @@ def print_summary(stats):
           f"   ({volume_check.CALLS} CoinGecko calls)")
     print(f"       - dropped (falling) ................... {stats['skipped_vol_falling']:>6}")
     print(f"       - dropped (no CG history) ............. {stats['skipped_vol_unknown']:>6}")
+    print(f"  5b. Price gain (14d<=30%, 60d<=50%) - passed {stats['passed_price_gain']:>6}")
+    print(f"       - dropped (too far above the low) ..... {stats['skipped_price_gain']:>6}")
     print(f"       - CoinGecko failed, retry next run .... {stats['vol_retry_next_run']:>6}")
     print(f"  6. Honeypot (GoPlus) - passed .............. {stats['passed_security']:>6}")
     print(f"       - dropped (honeypot/unsafe) ........... {stats['skipped_unsafe']:>6}")
