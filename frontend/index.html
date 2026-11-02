@@ -2549,7 +2549,8 @@
   function futuresCard(f) {
     const head = `<div class="ratiocard"><h3>Futures Data</h3>`;
     if (!f || f.matched == null) return head + `<div class="note" style="margin:0">Futures data will appear after the next daily run.</div></div>`;
-    if (!f.matched) return head + `<div class="note" style="margin:0">No futures data — this coin has no perpetual contracts on major exchanges.</div></div>`;
+    if (!f.matched) return head + `<div class="note" style="margin:0">Spot / DEX only — no perpetual futures on major exchanges.
+      <small dir="rtl" lang="ar" style="display:block;margin-top:4px">سبوت / DEX فقط — لا توجد عقود فيوتشر دائمة على المنصات الكبرى.</small></div></div>`;
     const h = f.history || [];
     if (!h.length) return head + `<div class="note" style="margin:0">Futures data will appear after the next daily run.</div></div>`;
     const dates = h.map(x => `<th>${esc(shortDate(x.date))}</th>`).join("");
