@@ -306,7 +306,8 @@ def get_coins():
         for i, r in enumerate(rows, start=1):
             r["rank"] = i
 
-        return {"count": len(rows), "coins": rows}
+        from market_regime import latest as market_regime
+        return {"count": len(rows), "coins": rows, "market_regime": market_regime(session)}
     finally:
         session.close()
 

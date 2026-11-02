@@ -218,6 +218,15 @@ def run_pipeline(raise_on_error=False):
             log.exception("Burned supply update failed - continuing.")
             report.step_errors.append("Burned supply")
 
+        # Market Regime banner (BTC / ETH / SOL 30d + 7d): one CoinGecko call
+        # every 7 days, skipped in between. Observation only - no rule reads it.
+        try:
+            from market_regime import run_market_regime
+            run_market_regime()
+        except Exception:
+            log.exception("Market regime update failed - continuing.")
+            report.step_errors.append("Market regime")
+
         log.info("Scoring active coins...")
         results = score_all()
         report.scored = len(results)

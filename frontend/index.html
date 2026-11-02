@@ -190,6 +190,8 @@
     border-radius: 10px; padding: 10px 14px; margin: 0 0 12px; font-size: 13px; color: var(--muted); }
   .perfov b { color: var(--text); font-variant-numeric: tabular-nums; }
   .perfov a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  .regime .verdict { flex-basis: 100%; color: var(--text); font-weight: 700; font-size: 14px; }
+  .regime .up { color: #3fb950; } .regime .down { color: #f85149; }
   .perfov a:hover { text-decoration: underline; }
   .perfcard .pbig { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 6px 0 2px; }
   .perfcard.bigup .pbig, .perfcard.up .pbig { color: #3fb950; }
@@ -574,6 +576,7 @@
   <div class="badgelegend"><span>🆕 new — entered the list on the latest daily run</span>
     <span>🔥 hot — 24h volume above 25% of market cap</span>
     <span>🚨 / ⚠️ / 📈 volume 5x+ / 3–5x / 2–3x its 30-day average</span></div>
+  <div class="perfov regime" id="market-regime" hidden></div>
   <div class="card">
     <table data-table="active">
       <thead>
@@ -1179,8 +1182,22 @@
       </tbody></table></div></div>`;
   }
 
+  // Market Regime (BTC / ETH / SOL, 30d + 7d; refreshed every 7 days) - display only.
+  function renderRegime(r) {
+    const box = document.getElementById("market-regime");
+    if (!r || !r.state) { box.hidden = true; return; }
+    const pc = v => v == null ? "—" : `<b class="${v >= 0 ? "up" : "down"}">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</b>`;
+    const m = r.market;
+    box.innerHTML = `<div class="verdict">${r.emoji} Market State: ${esc(r.label)} —
+        <bdi dir="rtl" lang="ar">حالة السوق: ${esc(r.label_ar)}</bdi> (30d ${pc(m.d30)}, 7d ${pc(m.d7)})</div>`
+      + r.coins.map(c => `<span>${esc(c.symbol)} 30d: ${pc(c.d30)} | 7d: ${pc(c.d7)}</span>`).join("")
+      + `<span>Market (avg) 30d: ${pc(m.d30)} | 7d: ${pc(m.d7)}</span>`
+      + `<span>observation only · BTC / ETH / SOL · refreshed weekly${r.as_of ? " · " + esc(longDate(r.as_of.slice(0, 10))) : ""}</span>`;
+    box.hidden = false;
+  }
   function renderCoins(data) {
     activeData = data;
+    renderRegime(data.market_regime);
     renderPerfOverview(data.coins);
     const body = document.getElementById("coins-body");
     document.getElementById("active-title").textContent =
