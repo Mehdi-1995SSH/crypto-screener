@@ -874,3 +874,17 @@ class FilterEval(Base):
     return_pct = Column(Float)
     measured_on = Column(Date)
     reported_on = Column(Date)
+
+
+class MarketRegime(Base):
+    """
+    Market Regime banner (market_regime.py): BTC / ETH / SOL 30d + 7d change
+    and the resulting state, refreshed every 7 days. Display only - no rule
+    reads it.
+    """
+    __tablename__ = "market_regime"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    day = Column(Date, nullable=False, unique=True)
+    data = Column(Text, nullable=False)                        # JSON (market_regime.from_markets + as_of)
+    computed_at = Column(DateTime)
