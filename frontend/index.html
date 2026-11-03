@@ -192,7 +192,14 @@
   .perfov a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .regime .verdict { flex-basis: 100%; color: var(--text); font-weight: 700; font-size: 14px; }
   .regime .up { color: #3fb950; } .regime .down { color: #f85149; }
-  .pchart { height: 260px; margin-top: 6px; }
+  .pchart { height: 380px; margin-top: 6px; }
+  .pctools { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; }
+  .pctools .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .pctools button { background: transparent; color: var(--muted); border: 0; border-right: 1px solid var(--border);
+    padding: 4px 9px; font-size: 12px; cursor: pointer; }
+  .pctools button:last-child { border-right: 0; }
+  .pctools button[aria-pressed="true"] { background: rgba(88,166,255,0.18); color: var(--text); }
+  .pctools button:disabled { opacity: .45; cursor: default; }
   .plegend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .plegend i { display: inline-block; width: 14px; border-top: 2px dashed; vertical-align: middle; margin-right: 4px; }
   .perfov a:hover { text-decoration: underline; }
@@ -1788,7 +1795,7 @@
     wireBars("rplot", "rtip", ((c.revenue || {}).bars) || [],
              b => `<b>${esc(longDate(b.date))}</b><br>Revenue ${fmtUsd(b.revenue)}`);
     wireChart(c.tx_bars || []);
-    if (c.price_chart) renderPriceChart(document.getElementById("pchart-coin"), c.price_chart.series || [], priceLevels(c.price_chart));
+    if (c.price_chart) renderPriceChart("coin", c.price_chart);
     startUnlockCountdown();
     wireScoreBreakdown(c.score_history || []);
     if (scrollToCard) {
@@ -1802,8 +1809,13 @@
   // transactions; split green (buys, bottom) / red (sells, top) by the
   // day's buy:sell count ratio. Hover or tap a bar for all 6 values.
   // ---- price chart (TradingView Lightweight Charts, loaded on first use) ----
-  // Detail page: stored Codex daily closes; Check a Coin: CoinGecko daily closes.
-  // Lines: 14-day / 60-day low (given by the API, else from the series) + entry price.
+  // OHLC candles (15m / 1H / 4H / 1D) from the token's GeckoTerminal top pool,
+  // fetched by the VISITOR'S browser (0 storage, 0 of our quota; ~10 calls /
+  // min per visitor: 60 s cache, one retry, else the stored daily closes as a
+  // line). The 14d / 60d lows are anchored ONCE from the daily candles and stay
+  // FIXED on every timeframe: a vertical line + arrow under the candle where
+  // that low happened. Tools: Measure and Line, drawn by a series primitive in
+  // time / price coordinates (they follow pan / zoom).
   const LWC_SRC = "https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js";
   const LWC_SRI = "sha384-OK7vELvjHdhUFi31JYioPIcRHTROLdcDa6ZsNWgvgLaKj+9JqhU0Ad8g4wz3CXjA";
   let lwcLoad = null;
@@ -1816,46 +1828,224 @@
       document.head.appendChild(s);
     }));
   }
-  function priceLevels(pc) {
-    const s = (pc && pc.series) || [], now = s.length ? s[s.length - 1][1] : null;
-    const lowOf = days => { const v = s.slice(-days).map(x => x[1]).filter(Boolean); return v.length ? Math.min(...v) : null; };
-    const pct = v => now && v ? ` · now ${now >= v ? "+" : "−"}${Math.abs((now / v - 1) * 100).toFixed(1)}%` : "";
-    const l14 = pc.low_14d ?? lowOf(14), l60 = pc.low_60d ?? (s.length >= 60 ? lowOf(60) : null);
-    const out = [];
-    if (l14) out.push({label: "14d low", price: l14, color: "#58a6ff", style: 2, note: pct(l14)});
-    if (l60) out.push({label: "60d low", price: l60, color: "#bc8cff", style: 2, note: pct(l60)});
-    if (pc.entry_price) out.push({label: "Entry", price: pc.entry_price, color: "#8b949e", style: 1, note: pct(pc.entry_price)});
-    return out;
+  const GT = "https://api.geckoterminal.com/api/v2";
+  const TFS = {"15m": ["minute", 15], "1H": ["hour", 1], "4H": ["hour", 4], "1D": ["day", 1]};
+  const gtCache = new Map();                                   // "net:pool:tf" -> {at, candles}
+  async function gtJson(url) {                                 // one retry on 429
+    for (let i = 0; i < 2; i++) {
+      const r = await fetch(url, {headers: {accept: "application/json;version=20230302"}});
+      if (r.status === 429 && i === 0) { await new Promise(ok => setTimeout(ok, 2500)); continue; }
+      if (!r.ok) throw new Error("GeckoTerminal " + r.status);
+      return r.json();
+    }
+  }
+  async function gtPool(pc) {                                  // the token's top pool, remembered per contract
+    if (pc.pool) return pc.pool;
+    const k = "gtpool:" + pc.gt_network + ":" + String(pc.contract).toLowerCase();
+    const known = store(k, null);
+    if (known) return known;
+    const d = await gtJson(`${GT}/networks/${pc.gt_network}/tokens/${pc.contract}/pools?page=1`);
+    const pool = (((d.data || [])[0] || {}).attributes || {}).address;
+    if (pool) save(k, pool);
+    return pool;
+  }
+  async function gtCandles(pc, tf) {                           // [{time, open, high, low, close}] oldest first
+    const pool = await gtPool(pc);
+    if (!pool) throw new Error("no pool");
+    const key = `${pc.gt_network}:${pool}:${tf}`, hit = gtCache.get(key);
+    if (hit && Date.now() - hit.at < 60000) return hit.candles;
+    const [unit, agg] = TFS[tf];
+    const d = await gtJson(`${GT}/networks/${pc.gt_network}/pools/${pool}/ohlcv/${unit}?aggregate=${agg}&limit=1000&currency=usd&token=${pc.contract}`);
+    const candles = (((d.data || {}).attributes || {}).ohlcv_list || [])
+      .map(([t, o, h, l, c]) => ({time: t, open: o, high: h, low: l, close: c})).reverse();
+    gtCache.set(key, {at: Date.now(), candles});
+    return candles;
+  }
+  // FIXED lows from DAILY candles (oldest first): the lowest candle of the last 14 /
+  // 60 days (60d needs 60 days of history) + the latest close. Pure.
+  function fixedLows(daily) {
+    if (!daily.length) return {now: null, lows: []};
+    const lows = [];
+    for (const [label, days, color] of [["14d low", 14, "#58a6ff"], ["60d low", 60, "#bc8cff"]]) {
+      if (days === 60 && daily.length < 60) continue;
+      const c = daily.slice(-days).reduce((a, x) => x.low < a.low ? x : a);
+      lows.push({label, days, color, time: c.time, price: c.low});
+    }
+    return {now: daily[daily.length - 1].close, lows};
+  }
+  // The candle (any timeframe) where a fixed daily low happened: the lowest candle
+  // inside that UTC day; null when the loaded candles don't reach that day. Pure.
+  function lowCandle(candles, dayTime) {
+    const inDay = candles.filter(c => c.time >= dayTime && c.time < dayTime + 86400);
+    return inDay.length ? inDay.reduce((a, c) => c.low < a.low ? c : a) : null;
+  }
+  // The Measure tool's text: % change, price change, bars and time between A and B. Pure.
+  function measureLabel(a, b, candles) {
+    const i = t => candles.findIndex(c => c.time === t);
+    const bars = Math.abs(i(b.time) - i(a.time)), secs = Math.abs(b.time - a.time);
+    const pct = (b.price / a.price - 1) * 100;
+    const span = secs >= 86400 ? `${Math.floor(secs / 86400)}d ${Math.round(secs % 86400 / 3600)}h`
+                               : `${Math.floor(secs / 3600)}h ${Math.round(secs % 3600 / 60)}m`;
+    return `${pct >= 0 ? "+" : "−"}${Math.abs(pct).toFixed(2)}% · ${b.price >= a.price ? "+" : "−"}${fmtPrice(Math.abs(b.price - a.price))}`
+      + ` · ${bars} bar${bars === 1 ? "" : "s"} · ${span}`;
+  }
+  // Series primitive: the fixed-low vertical lines + the user's Line / Measure drawings.
+  class ChartOverlay {
+    constructor() { this.vlines = []; this.items = []; this.draft = null; this.update = () => {}; }
+    attached({chart, series, requestUpdate}) { this.chart = chart; this.series = series; this.update = requestUpdate; }
+    detached() { this.update = () => {}; }
+    updateAllViews() {}
+    paneViews() {
+      return [{renderer: () => ({draw: target => target.useMediaCoordinateSpace(({context, mediaSize}) => this.draw(context, mediaSize))})}];
+    }
+    xy(p) { return [this.chart.timeScale().timeToCoordinate(p.time), this.series.priceToCoordinate(p.price)]; }
+    draw(ctx, size) {
+      ctx.save();
+      ctx.lineWidth = 1;
+      for (const v of this.vlines) {
+        const x = this.chart.timeScale().timeToCoordinate(v.time);
+        if (x == null) continue;
+        ctx.strokeStyle = v.color; ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size.height); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.font = "12px sans-serif";
+      for (const it of [...this.items, this.draft].filter(Boolean)) {
+        const [x1, y1] = this.xy(it.a), [x2, y2] = this.xy(it.b);
+        if ([x1, y1, x2, y2].some(v => v == null)) continue;
+        if (it.kind === "line") {
+          ctx.strokeStyle = "#e3b341"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+          continue;
+        }
+        const up = it.b.price >= it.a.price, color = up ? "#3fb950" : "#f85149";
+        ctx.fillStyle = up ? "rgba(63,185,80,0.18)" : "rgba(248,81,73,0.18)";
+        ctx.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+        ctx.strokeStyle = color; ctx.lineWidth = 1;
+        ctx.strokeRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+        if (it.label) {
+          const w = ctx.measureText(it.label).width + 10, lx = Math.max(0, Math.min(Math.min(x1, x2), size.width - w));
+          const ly = Math.min(y1, y2) > 24 ? Math.min(y1, y2) - 22 : Math.max(y1, y2) + 4;
+          ctx.fillStyle = color; ctx.fillRect(lx, ly, w, 18);
+          ctx.fillStyle = "#fff"; ctx.fillText(it.label, lx + 5, ly + 13);
+        }
+      }
+      ctx.restore();
+    }
   }
   function priceChartCard(pc, id) {
-    if (!pc || !(pc.series || []).length) return "";
-    const lv = priceLevels(pc);
+    if (!pc || !((pc.series || []).length || pc.gt_network)) return "";
     return `<div class="chartcard"><h3>Price</h3>
-      <div class="note">${pc.series.length} daily closes (${esc(pc.source || "")}) · lines: 14-day / 60-day low${pc.entry_price ? " and entry price" : ""} · drag or scroll to zoom</div>
-      <div class="pchart" id="pchart-${id}"></div>
-      <div class="plegend">${lv.map(l => `<span><i style="border-color:${l.color}"></i>${l.label} ${fmtPrice(l.price)}${l.note}</span>`).join("")}</div></div>`;
+      <div class="pctools" id="pctools-${id}">
+        <span class="seg">${Object.keys(TFS).map(tf => `<button type="button" data-tf="${tf}" aria-pressed="${tf === "1D"}">${tf}</button>`).join("")}</span>
+        <span class="seg"><button type="button" data-mode="cursor" aria-pressed="true">Cursor</button><button type="button" data-mode="measure" aria-pressed="false" title="Click two points on the chart">📏 Measure</button><button type="button" data-mode="line" aria-pressed="false" title="Click two points on the chart">✏️ Line</button><button type="button" data-clear>🗑️ Clear</button></span>
+      </div>
+      <div class="pchart" id="pchart-${id}"><div class="empty">Loading chart…</div></div>
+      <div class="plegend" id="plegend-${id}"></div>
+      <div class="note" id="pnote-${id}"></div></div>`;
   }
-  // Draws the chart into el; returns {chart, series} so later overlays can add series / lines / markers.
-  async function renderPriceChart(el, seriesData, levels) {
-    if (!el || !seriesData.length) return null;
+  const pcharts = {};                                         // id -> chart state (one chart per page)
+  // Draws the chart for pc into the card priceChartCard(pc, id) made. Returns the
+  // state {chart, series, overlay, ...} so later overlays can hook in.
+  async function renderPriceChart(id, pc) {
+    const el = document.getElementById("pchart-" + id), tools = document.getElementById("pctools-" + id);
+    const legend = document.getElementById("plegend-" + id), note = document.getElementById("pnote-" + id);
+    if (!el || !pc) return null;
+    if (pcharts[id]) { pcharts[id].chart.remove(); delete pcharts[id]; }
     try { await loadLWC(); } catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return null; }
-    if (!el.isConnected) return null;                       // the user already left the page
+    if (!el.isConnected) return null;                         // the user already left the page
+    const closes = (pc.series || []).map(([d, v]) => ({time: Date.parse(d + "T00:00:00Z") / 1000, open: v, high: v, low: v, close: v}));
+    let daily = null;
+    if (pc.gt_network) { try { daily = await gtCandles(pc, "1D"); } catch (e) { daily = null; } }
+    if (!el.isConnected) return null;
+    el.innerHTML = "";
     const muted = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim() || "#8b949e";
     const chart = LightweightCharts.createChart(el, {
       autoSize: true,
       layout: {background: {color: "transparent"}, textColor: muted},
       grid: {vertLines: {visible: false}, horzLines: {color: "rgba(139,148,158,0.12)"}},
-      rightPriceScale: {borderVisible: false}, timeScale: {borderVisible: false},
+      rightPriceScale: {borderVisible: false},
+      timeScale: {borderVisible: false, timeVisible: true, rightOffset: 12},   // room for a recent low's label
       localization: {locale: "en-US", priceFormatter: v => fmtPrice(v)},
     });
-    const series = chart.addAreaSeries({lineColor: "#58a6ff", topColor: "rgba(88,166,255,0.25)",
-                                        bottomColor: "rgba(88,166,255,0.02)", lineWidth: 2,
-                                        priceFormat: {type: "custom", formatter: v => fmtPrice(v), minMove: 1e-12}});
-    series.setData(seriesData.map(([d, v]) => ({time: d, value: v})));
-    for (const l of levels) series.createPriceLine({price: l.price, color: l.color, lineWidth: 1, lineStyle: l.style,
-                                                    axisLabelVisible: true, title: l.label});
-    chart.timeScale().fitContent();
-    return {chart, series};
+    const st = {chart, series: null, overlay: new ChartOverlay(), candles: [], mode: "cursor", pending: null,
+                candlesOk: !!(daily && daily.length)};
+    st.fixed = fixedLows(st.candlesOk ? daily : closes);      // FIXED for every timeframe
+    pcharts[id] = st;
+    const pf = {type: "custom", formatter: v => fmtPrice(v), minMove: 1e-12};
+    async function show(tf) {
+      let candles = null;
+      if (st.candlesOk) { try { candles = tf === "1D" ? daily : await gtCandles(pc, tf); } catch (e) { candles = null; } }
+      if (!el.isConnected || pcharts[id] !== st) return;
+      if (st.series) chart.removeSeries(st.series);
+      st.overlay.items = []; st.overlay.draft = null; st.pending = null;
+      const isCandles = !!(candles && candles.length);
+      st.candles = isCandles ? candles : closes;
+      st.series = isCandles
+        ? chart.addCandlestickSeries({upColor: "#3fb950", downColor: "#f85149", wickUpColor: "#3fb950",
+                                      wickDownColor: "#f85149", borderVisible: false, priceFormat: pf})
+        : chart.addLineSeries({color: "#58a6ff", lineWidth: 2, priceFormat: pf});
+      st.series.setData(isCandles ? candles : closes.map(c => ({time: c.time, value: c.close})));
+      st.series.attachPrimitive(st.overlay);
+      const marks = [], away = [];
+      st.overlay.vlines = [];
+      for (const l of st.fixed.lows) {
+        const c = lowCandle(st.candles, l.time);
+        if (!c) { away.push(l.label); continue; }
+        st.overlay.vlines.push({time: c.time, color: l.color});
+        marks.push({time: c.time, position: "belowBar", color: l.color, shape: "arrowUp", text: `${l.label} ${fmtPrice(l.price)}`});
+      }
+      st.series.setMarkers(marks.sort((a, b) => a.time - b.time));
+      if (pc.entry_price) st.series.createPriceLine({price: pc.entry_price, color: "#8b949e", lineWidth: 1, lineStyle: 1,
+                                                     axisLabelVisible: true, title: "Entry"});
+      chart.timeScale().fitContent();
+      const now = st.fixed.now, rel = v => now && v ? ` · now ${now >= v ? "+" : "−"}${Math.abs((now / v - 1) * 100).toFixed(1)}%` : "";
+      const day = t => longDate(new Date(t * 1000).toISOString().slice(0, 10));
+      const step = {"14d low": pc.low_14d, "60d low": pc.low_60d};
+      legend.innerHTML = st.fixed.lows.map(l => {
+        const s5 = step[l.label], differs = s5 && Math.abs(s5 / l.price - 1) > 0.005;
+        return `<span><i style="border-color:${l.color}"></i>${l.label} ${fmtPrice(l.price)} (${day(l.time)})${rel(l.price)}`
+          + `${differs ? ` · filter step 5b: ${fmtPrice(s5)}` : ""}${away.includes(l.label) ? " · before this range - switch to 4H / 1D" : ""}</span>`;
+      }).join("") + (pc.entry_price ? `<span><i style="border-color:#8b949e;border-top-style:dotted"></i>Entry ${fmtPrice(pc.entry_price)}${rel(pc.entry_price)}</span>` : "");
+      note.textContent = (isCandles ? `${tf} candles · GeckoTerminal top pool`
+        : `Candles unavailable right now - showing ${st.candles.length} daily closes (${pc.source || "stored"})`)
+        + " · lows fixed from the daily chart · 📏 / ✏️: click two points";
+      tools.querySelectorAll("[data-tf]").forEach(b => { b.setAttribute("aria-pressed", isCandles && b.dataset.tf === tf); b.disabled = !st.candlesOk; });
+    }
+    chart.subscribeClick(p => {
+      if (st.mode === "cursor" || !p.time || !p.point || !st.series) return;
+      const price = st.series.coordinateToPrice(p.point.y);
+      if (price == null) return;
+      const pt = {time: p.time, price};
+      if (!st.pending) { st.pending = pt; st.overlay.draft = {kind: st.mode, a: pt, b: pt, label: ""}; }
+      else {
+        st.overlay.items.push({kind: st.mode, a: st.pending, b: pt, label: st.mode === "measure" ? measureLabel(st.pending, pt, st.candles) : ""});
+        st.overlay.draft = null; st.pending = null;
+      }
+      st.overlay.update();
+    });
+    chart.subscribeCrosshairMove(p => {
+      if (!st.pending || !p.time || !p.point || !st.series) return;
+      const price = st.series.coordinateToPrice(p.point.y);
+      if (price == null) return;
+      st.overlay.draft.b = {time: p.time, price};
+      if (st.overlay.draft.kind === "measure") st.overlay.draft.label = measureLabel(st.pending, st.overlay.draft.b, st.candles);
+      st.overlay.update();
+    });
+    tools.onclick = e => {
+      const b = e.target.closest("button");
+      if (!b || b.disabled) return;
+      if (b.dataset.tf) return show(b.dataset.tf);
+      st.pending = null; st.overlay.draft = null;
+      if (b.hasAttribute("data-clear")) st.overlay.items = [];
+      else {
+        st.mode = b.dataset.mode;
+        tools.querySelectorAll("[data-mode]").forEach(x => x.setAttribute("aria-pressed", x === b));
+      }
+      st.overlay.update();
+    };
+    await show("1D");
+    return st;
   }
 
   function txChart(c, pid = "tx") {
@@ -2057,7 +2247,7 @@
         <div dir="rtl" lang="ar" style="font-size:15px;line-height:1.8;text-align:right">${esc(r.summary || "")}</div>
         <div class="opinion rtl" dir="rtl" lang="ar">${esc(r.opinion || "")}</div></div>`;
     wireChart(r.tx_bars || [], "ck");
-    if (r.price_chart) renderPriceChart(document.getElementById("pchart-ck"), r.price_chart.series || [], priceLevels(r.price_chart));
+    if (r.price_chart) renderPriceChart("ck", r.price_chart);
   }
 
   // 💧 Liquidity Sources: DexScreener / Codex / Birdeye, Birdeye's last price
