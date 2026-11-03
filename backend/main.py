@@ -785,6 +785,17 @@ def get_all_unlocks():
         session.close()
 
 
+@app.get("/api/decisions")
+def get_decisions():
+    """Coin Decision page: passed DAO catalysts stored by snapshot_scanner - no Snapshot call."""
+    from snapshot_scanner import latest
+    session = SessionLocal()
+    try:
+        return latest(session)
+    finally:
+        session.close()
+
+
 @app.get("/api/queue")
 def get_queue():
     """The next 600 coins in the entry queue (the next 2 daily runs), in the

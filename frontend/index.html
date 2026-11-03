@@ -200,6 +200,12 @@
   .pctools button:last-child { border-right: 0; }
   .pctools button[aria-pressed="true"] { background: rgba(88,166,255,0.18); color: var(--text); }
   .pctools button:disabled { opacity: .45; cursor: default; }
+  .deccard { padding: 14px 16px; margin-top: 10px; display: grid; gap: 6px; overflow-wrap: anywhere; }
+  .deccard .m { color: var(--muted); font-size: 13px; }
+  .deccard .dectitle { font-weight: 600; }
+  .deccard .decact { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 14px; }
+  .deccard .decact a { color: var(--accent); text-decoration: none; }
+  .deccard .decact a:hover { text-decoration: underline; }
   .plegend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .plegend i { display: inline-block; width: 14px; border-top: 2px dashed; vertical-align: middle; margin-right: 4px; }
   .perfov a:hover { text-decoration: underline; }
@@ -576,6 +582,8 @@
       Coming Up · <bdi>طابور</bdi> <span class="count" id="count-queue"></span></button>
     <button class="tab" role="tab" id="tab-check" aria-controls="view-check" data-view="check">
       Check a Coin</button>
+    <button class="tab" role="tab" id="tab-decision" aria-controls="view-decision" data-view="decision">
+      Coin Decision</button>
     <button class="tab" role="tab" id="tab-unlocks" aria-controls="view-unlocks" data-view="unlocks">
       Token Unlocks</button>
   </nav>
@@ -714,6 +722,13 @@
   <div class="cmp-pills" id="cmp-pills"></div>
   <div id="cmp-warn"></div>
   <div id="cmp-body"></div>
+  </section>
+
+  <section class="view" id="view-decision" role="tabpanel" aria-labelledby="tab-decision" hidden>
+  <h2>Coin Decision</h2>
+  <div class="sub">Passed, high-impact DAO votes from Snapshot (closed in the last 30 days), scanned every 6 hours. Passed votes usually execute 24–72 h after closing.</div>
+  <div class="pctools" id="dec-pills" role="group" aria-label="Filter by catalyst"></div>
+  <div id="dec-body"></div>
   </section>
 
   <section class="view" id="view-unlocks" role="tabpanel" aria-labelledby="tab-unlocks" hidden>
@@ -1629,7 +1644,7 @@
   // URL (#dropped / #queue) so a reload or a shared link opens the same view.
   // The 30-second refresh keeps updating all three, so switching is instant
   // and always current.
-  const VIEWS = ["active", "dropped", "favorites", "compare", "queue", "check", "unlocks"];
+  const VIEWS = ["active", "dropped", "favorites", "compare", "queue", "check", "decision", "unlocks"];
   // A hand-edited / truncated link can hold a broken %-escape; decodeURIComponent
   // would throw and stop the whole page script (nothing would load), so fall
   // back to the raw text.
@@ -1665,6 +1680,7 @@
     const hash = name === "active" ? "" : "#" + name;
     if (location.hash !== hash) history.replaceState(null, "", location.pathname + location.search + hash);
     if (name === "unlocks") loadUnlocks();
+    if (name === "decision") loadDecisions();
     if (name === "compare") initCompare();
     if (name === "favorites") fpLoad();
   }
@@ -3093,6 +3109,47 @@
         <div class="note" style="margin:12px 0 0">Wins are counted per row from the screener's stored data (Price and Market Cap are info only;
           missing data never wins; a row where every coin ties has no winner). This is a data comparison, not investment advice.</div></div>`;
   }
+
+  // ---------------------------------------------------------- Coin Decision page
+  // Passed DAO catalysts from Snapshot (/api/decisions, stored every 6 h by
+  // snapshot_scanner.py). Pills filter by tag; buttons open Snapshot / the coin.
+  const DEC_TAGS = [["", "All"], ["BURN", "🔥 BURN"], ["BUYBACK", "💰 BUYBACK"], ["TOKENOMICS", "⚙️ TOKENOMICS"], ["UPGRADE", "🚀 UPGRADE"]];
+  let decRows = null, decTag = "";
+  async function loadDecisions() {
+    if (!decRows) {
+      try { decRows = await (await fetch("/api/decisions")).json(); }
+      catch (e) { document.getElementById("dec-body").innerHTML = '<div class="empty">Could not load DAO decisions.</div>'; return; }
+    }
+    document.getElementById("dec-pills").innerHTML = DEC_TAGS.map(([t, label]) =>
+      `<span class="seg"><button type="button" data-tag="${t}" aria-pressed="${t === decTag}">${label} (${decRows.filter(r => !t || r.tag === t).length})</button></span>`).join("");
+    const rows = decRows.filter(r => !decTag || r.tag === decTag);
+    document.getElementById("dec-body").innerHTML = rows.length ? rows.map(decCard).join("")
+      : `<div class="card empty">No passed catalyst votes in the last 30 days${decTag ? " for this tag" : ""}.</div>`;
+  }
+  function decClosed(iso) {
+    const h = (Date.now() - Date.parse(iso)) / 3.6e6;
+    return h < 48 ? `${Math.max(0, Math.floor(h))}h ago` : longDate(iso.slice(0, 10));
+  }
+  function decCard(r) {
+    const c = r.contract ? encodeURIComponent(r.contract) : null;
+    const mcap = r.market_cap ? (r.mcap_source === "dexscreener" ? "≈" : "") + fmtMoney(r.market_cap) : "n/a";
+    return `<div class="card deccard">
+      <div><b>${esc(r.space_name || r.space_id)}</b> <span class="m">${esc(r.symbol || "")}</span>
+        ${r.verified ? '<span class="badge good">✓ Verified</span>' : ""}
+        ${r.in_screener ? '<span class="badge mid">In Active Coins</span>' : ""}
+        <span class="m">· MCap ${mcap}</span></div>
+      <div><span class="tag">${esc(r.emoji + " " + r.tag)}</span> <span class="m">matched “${esc(r.keyword)}”</span></div>
+      <div class="dectitle">${esc(r.title)}</div>
+      <div class="m">${r.approval_pct.toFixed(1)}% ${esc(r.winning_choice)} · closed ${decClosed(r.closed_at)}</div>
+      <div class="decact">
+        <a href="https://snapshot.org/#/${encodeURIComponent(r.space_id)}/proposal/${encodeURIComponent(r.proposal_id)}" target="_blank" rel="noopener">Open on Snapshot ↗</a>
+        ${c ? `<a href="#${r.in_screener ? "coin" : "check"}/${c}">${r.in_screener ? "Check in Screener" : "Add to Screener"} →</a>`
+            : '<span class="m">token not resolved</span>'}</div></div>`;
+  }
+  document.getElementById("dec-pills").addEventListener("click", e => {
+    const b = e.target.closest("button[data-tag]");
+    if (b) { decTag = b.dataset.tag; loadDecisions(); }
+  });
 
   // ---------------------------------------------------------- Token Unlocks page
   // Every coin in DropsTab's unlock overview (/api/unlocks), searchable and

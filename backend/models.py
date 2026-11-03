@@ -888,3 +888,39 @@ class MarketRegime(Base):
     day = Column(Date, nullable=False, unique=True)
     data = Column(Text, nullable=False)                        # JSON (market_regime.from_markets + as_of)
     computed_at = Column(DateTime)
+
+
+class DaoCatalystAlert(Base):
+    """
+    Coin Decision page (snapshot_scanner.py): one passed, high-impact Snapshot
+    proposal. Website only - no rule reads it; rows closed > 30 days ago are
+    deleted on every scan.
+    """
+    __tablename__ = "dao_catalyst_alerts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    proposal_id = Column(String, nullable=False, unique=True)
+    space_id = Column(String, nullable=False)
+    space_name = Column(String)
+    symbol = Column(String)
+    verified = Column(Boolean)
+    followers = Column(Integer)
+    tag = Column(String, nullable=False)                       # BURN / BUYBACK / TOKENOMICS / UPGRADE
+    keyword = Column(String, nullable=False)
+    title = Column(Text, nullable=False)
+    winning_choice = Column(String)
+    approval_pct = Column(Float)
+    closed_at = Column(DateTime, nullable=False, index=True)   # UTC, the proposal's end
+    chain = Column(String)                                     # resolved token; None = not found
+    contract = Column(String)
+    market_cap = Column(Float)
+    mcap_source = Column(String)                               # "coingecko" | "dexscreener" (display only)
+    found_at = Column(DateTime, default=utcnow)
+
+
+class DaoScanState(Base):
+    """One row (id=1): when snapshot_scanner last scanned - its 6-hour gate."""
+    __tablename__ = "dao_scan_state"
+
+    id = Column(Integer, primary_key=True)
+    last_scan_at = Column(DateTime, nullable=False)
