@@ -184,7 +184,7 @@ def run_check(contract):
     from liquidity_check import check_liquidity_trend, MAX_DROP_PCT, MIN_LIQUIDITY_USD
     from narrative_check import _pick_category
     from queue_view import narrative_from_tags
-    from tx_bars import fetch_daily
+    from tx_bars import fetch_daily, GT_NETWORKS
     from revenue_detail import fetch as fetch_revenue
     from price_range import from_market_data
     from socials import handle_from, handle_from_cmc, x_url
@@ -468,7 +468,10 @@ def run_check(contract):
         # Price chart: daily closes from the CoinGecko response step 5 already
         # fetched + step 5b's own 14d / 60d lows - the same numbers as the filter step.
         "price_chart": {"series": daily_closes(contract, chain), "low_14d": pg["low_14d"],
-                        "low_60d": pg["low_60d"], "source": "CoinGecko"},
+                        "low_60d": pg["low_60d"], "source": "CoinGecko",
+                        # the browser fetches OHLC candles from GeckoTerminal: the DexScreener top pool
+                        "gt_network": GT_NETWORKS.get((chain or "").lower()), "contract": contract,
+                        "pool": top_pool(pairs)},
         "tx_error": tx_err,
         "tx_window_days": 15,
         "steps": steps,
@@ -685,6 +688,12 @@ def _stored_closes(contract):
         session.close()
 
 
+def top_pool(pairs):
+    """The most liquid DexScreener pair's address (= GeckoTerminal's pool), or None."""
+    best = max(pairs or [], key=lambda p: (p.get("liquidity") or {}).get("usd") or 0, default=None)
+    return best.get("pairAddress") if best else None
+
+
 def _check_burn(contract, chain, pairs, max_supply=None):
     """Burned supply: the daily run's stored value for a coin we track, else
     a live check (EVM / Solana). None when unavailable. Never raises."""
@@ -725,7 +734,7 @@ def rules_signature():
     from volume_check import VOLUME_MIN_RISE
     from liquidity_check import MAX_DROP_PCT, MIN_LIQUIDITY_USD
     return (f"mcap {MIN_MCAP}-{MAX_MCAP}|age {MIN_AGE_DAYS}|vol {VOLUME_MIN_RISE}|liq {MAX_DROP_PCT}/{MIN_LIQUIDITY_USD}"
-            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb|gain1|buyers1|pchart1"
+            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb|gain1|buyers1|pchart2"
             "|liq3src|liq3k|score-v3")   # result layout: has these display sections
 
 

@@ -51,4 +51,11 @@ class LateSession:
 
 late = LateSession()
 assert coin_check.get_check(late, "0xRACE")["found"] is True and late.rolled
+
+# 4. the candles' pool on Check a Coin = the most liquid DexScreener pair
+assert coin_check.top_pool([{"pairAddress": "0xsmall", "liquidity": {"usd": 5}},
+                            {"pairAddress": "0xbig", "liquidity": {"usd": 900}}, {"pairAddress": "0xnone"}]) == "0xbig"
+assert coin_check.top_pool([]) is None and coin_check.top_pool(None) is None
+from tx_bars import GT_NETWORKS
+assert GT_NETWORKS["ethereum"] == "eth" and GT_NETWORKS["solana"] == "solana"   # the network the browser asks for
 print("price chart self-check: ok")

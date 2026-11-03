@@ -583,6 +583,7 @@ def get_coin(contract: str):
         from burn_detector import for_coin as burn_for_coin
         from security_check import SECURITY_COLUMNS
         from entry_zone import load_bars
+        from tx_bars import GT_NETWORKS
         from concurrent.futures import ThreadPoolExecutor
 
         def own_session(fn, *args):
@@ -708,7 +709,9 @@ def get_coin(contract: str):
             # Price chart (detail page): the stored Codex daily closes (Entry Zone's
             # history, up to 90 days) + the stop-loss baseline. No API call.
             "price_chart": {"series": [[d.isoformat(), c] for d, c, _, _ in (load_bars(session, coin)[0] or []) if c],
-                            "entry_price": coin.entry_price, "source": "Codex daily closes"},
+                            "entry_price": coin.entry_price, "source": "Codex daily closes",
+                            # the browser fetches OHLC candles from GeckoTerminal with these
+                            "gt_network": GT_NETWORKS.get((coin.chain or "").lower()), "contract": coin.contract},
             "unlocks": get_unlocks(session, coin),   # DropsTab, stored (no API call)
             "futures": futures_data(session, coin.id),  # Coinalyze, stored (no API call)
             "listings": get_listings(session, coin),    # exchange listings, stored (no API call)
