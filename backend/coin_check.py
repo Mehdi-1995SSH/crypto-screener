@@ -36,6 +36,7 @@ import json
 from datetime import datetime, timezone
 
 import requests
+from sqlalchemy.exc import IntegrityError
 
 DEX_TOKENS_URL = "https://api.dexscreener.com/latest/dex/tokens/{addr}"
 CG_CONTRACT_URL = "https://api.coingecko.com/api/v3/coins/{platform}/contract/{addr}"
@@ -177,7 +178,8 @@ def run_check(contract):
                              CG_WRAPPED_CATEGORIES, WRAPPED_KEEP_CG_IDS)
     from age_check import decide_age, MIN_AGE_DAYS
     from revenue_check import check_revenue
-    from volume_check import check_volume_rising, check_price_gain, VOLUME_MIN_RISE, GAIN_14D_MAX, GAIN_60D_MAX
+    from volume_check import (check_volume_rising, check_price_gain, daily_closes, VOLUME_MIN_RISE,
+                              GAIN_14D_MAX, GAIN_60D_MAX)
     from security_check import check_token_security, rejects, SECURITY_COLUMNS
     from liquidity_check import check_liquidity_trend, MAX_DROP_PCT, MIN_LIQUIDITY_USD
     from narrative_check import _pick_category
@@ -463,6 +465,10 @@ def run_check(contract):
         # Volume Alert: a tracked coin's stored spike (last 7 days); None otherwise.
         "volume_spike": spike_for_contract(contract),
         "tx_bars": (daily or {}).get("bars") or [],
+        # Price chart: daily closes from the CoinGecko response step 5 already
+        # fetched + step 5b's own 14d / 60d lows - the same numbers as the filter step.
+        "price_chart": {"series": daily_closes(contract, chain), "low_14d": pg["low_14d"],
+                        "low_60d": pg["low_60d"], "source": "CoinGecko"},
         "tx_error": tx_err,
         "tx_window_days": 15,
         "steps": steps,
@@ -719,7 +725,7 @@ def rules_signature():
     from volume_check import VOLUME_MIN_RISE
     from liquidity_check import MAX_DROP_PCT, MIN_LIQUIDITY_USD
     return (f"mcap {MIN_MCAP}-{MAX_MCAP}|age {MIN_AGE_DAYS}|vol {VOLUME_MIN_RISE}|liq {MAX_DROP_PCT}/{MIN_LIQUIDITY_USD}"
-            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb|gain1|buyers1"
+            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb|gain1|buyers1|pchart1"
             "|liq3src|liq3k|score-v3")   # result layout: has these display sections
 
 
@@ -748,6 +754,9 @@ def get_check(session, contract):
             session.add(row)
         row.day = today
         row.data = json.dumps(res, default=str)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:          # a parallel check of the same coin saved its row first
+            session.rollback()
     res["cached"] = False
     return res

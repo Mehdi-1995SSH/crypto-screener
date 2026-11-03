@@ -192,6 +192,9 @@
   .perfov a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .regime .verdict { flex-basis: 100%; color: var(--text); font-weight: 700; font-size: 14px; }
   .regime .up { color: #3fb950; } .regime .down { color: #f85149; }
+  .pchart { height: 260px; margin-top: 6px; }
+  .plegend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .plegend i { display: inline-block; width: 14px; border-top: 2px dashed; vertical-align: middle; margin-right: 4px; }
   .perfov a:hover { text-decoration: underline; }
   .perfcard .pbig { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 6px 0 2px; }
   .perfcard.bigup .pbig, .perfcard.up .pbig { color: #3fb950; }
@@ -750,7 +753,10 @@
     if (v == null) return "—";
     if (v >= 1000) return "$" + v.toLocaleString(undefined, {maximumFractionDigits: 0});
     if (v >= 1) return "$" + v.toFixed(2);
-    return "$" + Number(v.toPrecision(4)).toString();
+    if (v <= 0) return "$0";
+    // 4 significant digits as plain decimals - never "6.756e-9"
+    const s = v.toFixed(Math.min(20, 3 - Math.floor(Math.log10(v))));
+    return "$" + s.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
   }
   // Price cell; hover shows when the daily run last refreshed it.
   // "12m ago" for an ISO time.
@@ -1758,6 +1764,7 @@
       </div>
       ${allScoreCard(c.score_history)}
       ${futuresCard(c.futures)}
+      ${priceChartCard(c.price_chart, "coin")}
       ${txChart(c)}
       ${ratioCard(c, "Volume / Market cap", "vol_mcap_pct", fmtPct,
           "Traded volume as a % of the coin's market cap (CoinGecko/CMC): " + fmtMoney(c.mcap) + ".")}
@@ -1781,6 +1788,7 @@
     wireBars("rplot", "rtip", ((c.revenue || {}).bars) || [],
              b => `<b>${esc(longDate(b.date))}</b><br>Revenue ${fmtUsd(b.revenue)}`);
     wireChart(c.tx_bars || []);
+    if (c.price_chart) renderPriceChart(document.getElementById("pchart-coin"), c.price_chart.series || [], priceLevels(c.price_chart));
     startUnlockCountdown();
     wireScoreBreakdown(c.score_history || []);
     if (scrollToCard) {
@@ -1793,6 +1801,63 @@
   // Transactions chart: one bar per COMPLETE day. Height = total
   // transactions; split green (buys, bottom) / red (sells, top) by the
   // day's buy:sell count ratio. Hover or tap a bar for all 6 values.
+  // ---- price chart (TradingView Lightweight Charts, loaded on first use) ----
+  // Detail page: stored Codex daily closes; Check a Coin: CoinGecko daily closes.
+  // Lines: 14-day / 60-day low (given by the API, else from the series) + entry price.
+  const LWC_SRC = "https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js";
+  const LWC_SRI = "sha384-OK7vELvjHdhUFi31JYioPIcRHTROLdcDa6ZsNWgvgLaKj+9JqhU0Ad8g4wz3CXjA";
+  let lwcLoad = null;
+  function loadLWC() {
+    return lwcLoad || (lwcLoad = new Promise((ok, fail) => {
+      const s = document.createElement("script");
+      s.src = LWC_SRC; s.integrity = LWC_SRI; s.crossOrigin = "anonymous";
+      s.onload = ok;
+      s.onerror = () => { lwcLoad = null; s.remove(); fail(new Error("The chart library didn't load - try again later.")); };
+      document.head.appendChild(s);
+    }));
+  }
+  function priceLevels(pc) {
+    const s = (pc && pc.series) || [], now = s.length ? s[s.length - 1][1] : null;
+    const lowOf = days => { const v = s.slice(-days).map(x => x[1]).filter(Boolean); return v.length ? Math.min(...v) : null; };
+    const pct = v => now && v ? ` · now ${now >= v ? "+" : "−"}${Math.abs((now / v - 1) * 100).toFixed(1)}%` : "";
+    const l14 = pc.low_14d ?? lowOf(14), l60 = pc.low_60d ?? (s.length >= 60 ? lowOf(60) : null);
+    const out = [];
+    if (l14) out.push({label: "14d low", price: l14, color: "#58a6ff", style: 2, note: pct(l14)});
+    if (l60) out.push({label: "60d low", price: l60, color: "#bc8cff", style: 2, note: pct(l60)});
+    if (pc.entry_price) out.push({label: "Entry", price: pc.entry_price, color: "#8b949e", style: 1, note: pct(pc.entry_price)});
+    return out;
+  }
+  function priceChartCard(pc, id) {
+    if (!pc || !(pc.series || []).length) return "";
+    const lv = priceLevels(pc);
+    return `<div class="chartcard"><h3>Price</h3>
+      <div class="note">${pc.series.length} daily closes (${esc(pc.source || "")}) · lines: 14-day / 60-day low${pc.entry_price ? " and entry price" : ""} · drag or scroll to zoom</div>
+      <div class="pchart" id="pchart-${id}"></div>
+      <div class="plegend">${lv.map(l => `<span><i style="border-color:${l.color}"></i>${l.label} ${fmtPrice(l.price)}${l.note}</span>`).join("")}</div></div>`;
+  }
+  // Draws the chart into el; returns {chart, series} so later overlays can add series / lines / markers.
+  async function renderPriceChart(el, seriesData, levels) {
+    if (!el || !seriesData.length) return null;
+    try { await loadLWC(); } catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return null; }
+    if (!el.isConnected) return null;                       // the user already left the page
+    const muted = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim() || "#8b949e";
+    const chart = LightweightCharts.createChart(el, {
+      autoSize: true,
+      layout: {background: {color: "transparent"}, textColor: muted},
+      grid: {vertLines: {visible: false}, horzLines: {color: "rgba(139,148,158,0.12)"}},
+      rightPriceScale: {borderVisible: false}, timeScale: {borderVisible: false},
+      localization: {locale: "en-US", priceFormatter: v => fmtPrice(v)},
+    });
+    const series = chart.addAreaSeries({lineColor: "#58a6ff", topColor: "rgba(88,166,255,0.25)",
+                                        bottomColor: "rgba(88,166,255,0.02)", lineWidth: 2,
+                                        priceFormat: {type: "custom", formatter: v => fmtPrice(v), minMove: 1e-12}});
+    series.setData(seriesData.map(([d, v]) => ({time: d, value: v})));
+    for (const l of levels) series.createPriceLine({price: l.price, color: l.color, lineWidth: 1, lineStyle: l.style,
+                                                    axisLabelVisible: true, title: l.label});
+    chart.timeScale().fitContent();
+    return {chart, series};
+  }
+
   function txChart(c, pid = "tx") {
     const bars = c.tx_bars || [];
     // Days filled from GeckoTerminal (Codex had 0 / nothing) carry volume only -> the chart shows volume.
@@ -1977,6 +2042,7 @@
       ${liquiditySourcesCard(r.liquidity_sources, r.chain, true)}
       ${checkScoreCard(r.score)}
       ${volumeAlertCard(r.volume_spike)}
+      <div style="margin-top:12px">${priceChartCard(r.price_chart, "ck")}</div>
       <div style="margin-top:12px">${txChart(r, "ck")}</div>
       ${priceRangeCard(r.price_range)}
       ${relStrengthCard(r.rel_strength)}
@@ -1991,6 +2057,7 @@
         <div dir="rtl" lang="ar" style="font-size:15px;line-height:1.8;text-align:right">${esc(r.summary || "")}</div>
         <div class="opinion rtl" dir="rtl" lang="ar">${esc(r.opinion || "")}</div></div>`;
     wireChart(r.tx_bars || [], "ck");
+    if (r.price_chart) renderPriceChart(document.getElementById("pchart-ck"), r.price_chart.series || [], priceLevels(r.price_chart));
   }
 
   // 💧 Liquidity Sources: DexScreener / Codex / Birdeye, Birdeye's last price
