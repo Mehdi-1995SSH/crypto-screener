@@ -908,6 +908,7 @@ class DaoCatalystAlert(Base):
     tag = Column(String, nullable=False)                       # BURN / BUYBACK / TOKENOMICS / UPGRADE
     keyword = Column(String, nullable=False)
     title = Column(Text, nullable=False)
+    title_ar = Column(Text)                                    # Arabic title (translated at scan time; None = retry)
     winning_choice = Column(String)
     approval_pct = Column(Float)
     closed_at = Column(DateTime, nullable=False, index=True)   # UTC, the proposal's end
