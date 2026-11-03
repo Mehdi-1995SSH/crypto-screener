@@ -296,7 +296,13 @@ def main():
             s.close()
     except Exception as e:
         print(f"Challenge update skipped ({type(e).__name__})")
-    return 0                                  # never fail the workflow (no Actions spam)
+    # Coin Decision page: Snapshot DAO catalysts, every 6 h (snapshot_scanner gates itself).
+    try:
+        from snapshot_scanner import scan
+        print(f"Coin Decision: {scan()}")
+    except Exception as e:
+        print(f"Coin Decision scan failed ({type(e).__name__}) - retried next hour")
+    return 0                                 # never fail the workflow (no Actions spam)
 
 
 if __name__ == "__main__":

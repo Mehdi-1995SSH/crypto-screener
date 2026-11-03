@@ -74,6 +74,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           COINMARKETCAP_API_KEY: ${{ secrets.COINMARKETCAP_API_KEY }}   # primary live price
           CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}   # fallback for coins DexScreener can't price
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}   # Coin Decision market caps (every 6 h)
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
