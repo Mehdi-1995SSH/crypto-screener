@@ -163,6 +163,47 @@ def quality_ok(space, tok):
     return bool(space.get("verified")) or (tok.get("mcap_source") == "coingecko" and (tok.get("market_cap") or 0) >= MIN_MCAP)
 
 
+TICKER = re.compile(r"\$?\b[A-Z][A-Z0-9]{1,}\b|\$[A-Za-z]+\b")   # BEETS, $DRV, AIP, USDT - kept as is
+TR_URL = "https://translate.googleapis.com/translate_a/single"
+GLOSSARY = [(re.compile(r"\bstaking\b", re.I), "الستاكينغ"),          # Google: "spatial signing"
+            (re.compile(r"\btokenomics\b", re.I), "اقتصاد التوكن")]
+
+
+def translate_ar(title, keep_words=()):
+    """English title -> Arabic, tickers / codes / the project name kept in Latin
+    (else BEETS -> "beetroot"). None on failure (filled again next scan).
+    shortcut: Google's keyless web endpoint (not an official API) - switch to a keyed API if it starts refusing."""
+    keep = []
+    def hold(m, put_back=None):
+        keep.append(put_back or m.group(0))
+        return f"[{len(keep) - 1}]"
+    q = title or ""
+    for rx, ar in GLOSSARY:
+        q = rx.sub(lambda m: hold(m, ar), q)
+    for w in sorted({w for w in keep_words if w and len(w) > 2}, key=len, reverse=True):
+        q = re.sub(r"\b" + re.escape(w) + r"\b", hold, q, flags=re.I)
+    q = TICKER.sub(hold, q)
+    try:
+        r = requests.get(TR_URL, params={"client": "gtx", "sl": "en", "tl": "ar", "dt": "t", "q": q}, timeout=20)
+        r.raise_for_status()
+        out = "".join(seg[0] for seg in r.json()[0] if seg and seg[0])
+    except Exception as e:
+        log.warning("translate failed (%s)", type(e).__name__)
+        return None
+    out = re.sub(r"\[\s*(\d+)\s*\]", lambda m: keep[int(m.group(1))] if int(m.group(1)) < len(keep) else "", out)
+    return out.strip() or None
+
+
+def fill_arabic(session, limit=20):
+    """Arabic titles for rows that have none yet (new rows, earlier failures) -> count filled."""
+    from models import DaoCatalystAlert as A
+    n = 0
+    for r in session.query(A).filter(A.title_ar.is_(None)).limit(limit):
+        r.title_ar = translate_ar(r.title, [r.space_name, r.symbol])     # whole name: "Stake DAO BAL", not "Stake"
+        n += bool(r.title_ar)
+    return n
+
+
 def scan(force=False, now=None):
     """Hourly hook: scans every CADENCE_H hours (or force) -> stats. Raises on a
     Snapshot failure (the gate does not move, so the next hour retries)."""
@@ -202,6 +243,7 @@ def scan(force=False, now=None):
             known.add(p["id"])
             stats["kept"] += 1
         stats["pruned"] = session.query(A).filter(A.closed_at < now - timedelta(days=KEEP_D)).delete()
+        stats["arabic"] = fill_arabic(session)
         state = state or DaoScanState(id=1)
         state.last_scan_at = now
         session.add(state)
@@ -221,7 +263,7 @@ def latest(session):
         active = {c.lower() for (c,) in session.query(Coin.contract).filter(Coin.status == "active")}
         return [{"proposal_id": r.proposal_id, "space_id": r.space_id, "space_name": r.space_name, "symbol": r.symbol,
                  "verified": r.verified, "tag": r.tag, "emoji": EMOJI.get(r.tag, ""), "keyword": r.keyword,
-                 "title": r.title, "winning_choice": r.winning_choice, "approval_pct": r.approval_pct,
+                 "title": r.title, "title_ar": r.title_ar, "winning_choice": r.winning_choice, "approval_pct": r.approval_pct,
                  "closed_at": r.closed_at.strftime("%Y-%m-%dT%H:%M:%SZ"), "chain": r.chain, "contract": r.contract,
                  "market_cap": r.market_cap, "mcap_source": r.mcap_source,
                  "in_screener": (r.contract or "").lower() in active}

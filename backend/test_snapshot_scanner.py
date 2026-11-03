@@ -77,6 +77,28 @@ assert S.quality_ok({"verified": False}, {"market_cap": 6e6, "mcap_source": "coi
 assert not S.quality_ok({"verified": False}, {"market_cap": 6e6, "mcap_source": "dexscreener"})
 assert not S.quality_ok({"verified": False}, {"market_cap": 4e6, "mcap_source": "coingecko"})
 
+# 5b. translate_ar(): tickers / codes / the project name sent as placeholders and put back; failure -> None
+class FakeResp:
+    def __init__(self, js): self.js = js
+    def raise_for_status(self): pass
+    def json(self): return self.js
+sent = []
+def fake_get(url, params=None, timeout=None):
+    sent.append(params["q"])
+    if TR_FAIL:
+        raise ConnectionError("down")
+    return FakeResp([[["[0] احرق 10M [1] التي يحتفظ بها [ 2 ] ", None], ["على سونيك", None]]])
+real_get, S.requests.get, TR_FAIL = S.requests.get, fake_get, False
+out = S.translate_ar("[BIP-934] Burn the 10M BEETS held by the Balancer DAO on Sonic", ["Balancer DAO", None, "BAL"])
+assert sent[-1] == "[[1]-934] Burn the 10M [2] held by the [0] on Sonic", sent[-1]       # name held first, then tickers
+assert out == "Balancer DAO احرق 10M BIP التي يحتفظ بها BEETS على سونيك", out
+S.translate_ar("P4 – New Staking APY Formula", [])
+assert sent[-1] == "[1] – New [0] [2] Formula", sent[-1]              # glossary term held, put back in Arabic
+TR_FAIL = True
+assert S.translate_ar("Burn it") is None
+S.requests.get = real_get
+S.translate_ar = lambda title, keep=(): "عربي: " + title                 # scan() below stays offline
+
 # 6. scan(): gate, end_gte window, dedupe, followers gate before any lookup, prune, gate unmoved on failure
 NOW = datetime(2026, 11, 3, 12, 0)
 ts = lambda dt: int(dt.replace(tzinfo=timezone.utc).timestamp())
@@ -104,7 +126,7 @@ with database.SessionLocal() as s:
 PROPS = [prop("p1", "verified", True, 5), prop("p2", "big", False, 2000), prop("p3", "small", False, 2000),
          prop("p4", "nofollow", False, 10), prop("p5", "verified", True, 5, title="Grant program"), prop("p1", "verified", True, 5)]
 st = S.scan(now=NOW)
-assert st == {"scanned": 6, "kept": 2, "lookups": 3, "pruned": 1}, st
+assert st == {"scanned": 6, "kept": 2, "lookups": 3, "pruned": 1, "arabic": 2}, st
 assert seen_gte == [ts(NOW - timedelta(days=30))]                       # first run: 30-day backfill
 assert "nofollow" not in resolved                                       # < 1000 followers: no API call
 with database.SessionLocal() as s:
@@ -126,4 +148,5 @@ with database.SessionLocal() as s:
     rows = S.latest(s)
 assert [r["proposal_id"] for r in rows] == ["p1", "p2"] or [r["proposal_id"] for r in rows] == ["p2", "p1"]
 assert all(r["in_screener"] and r["emoji"] == "🔥" and r["closed_at"].endswith("Z") for r in rows)
+assert all(r["title_ar"] == "عربي: Burn 5% of supply" for r in rows)
 print("snapshot scanner self-check: ok")

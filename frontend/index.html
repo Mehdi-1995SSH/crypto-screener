@@ -203,6 +203,7 @@
   .deccard { padding: 14px 16px; margin-top: 10px; display: grid; gap: 6px; overflow-wrap: anywhere; }
   .deccard .m { color: var(--muted); font-size: 13px; }
   .deccard .dectitle { font-weight: 600; }
+  .deccard [dir="rtl"] { text-align: right; }
   .deccard .decact { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 14px; }
   .deccard .decact a { color: var(--accent); text-decoration: none; }
   .deccard .decact a:hover { text-decoration: underline; }
@@ -727,6 +728,7 @@
   <section class="view" id="view-decision" role="tabpanel" aria-labelledby="tab-decision" hidden>
   <h2>Coin Decision</h2>
   <div class="sub">Passed, high-impact DAO votes from Snapshot (closed in the last 30 days), scanned every 6 hours. Passed votes usually execute 24–72 h after closing.</div>
+  <div class="sub" dir="rtl" lang="ar">تصويتات وقرارات الـ DAO الهامة التي تمت الموافقة عليها مؤخراً (خلال آخر 30 يوماً)، يتم فحصها كل 6 ساعات. غالباً ما يتم تنفيذ هذه القرارات خلال 24 إلى 72 ساعة بعد إغلاق التصويت.</div>
   <div class="pctools" id="dec-pills" role="group" aria-label="Filter by catalyst"></div>
   <div id="dec-body"></div>
   </section>
@@ -3112,8 +3114,13 @@
 
   // ---------------------------------------------------------- Coin Decision page
   // Passed DAO catalysts from Snapshot (/api/decisions, stored every 6 h by
-  // snapshot_scanner.py). Pills filter by tag; buttons open Snapshot / the coin.
+  // snapshot_scanner.py). Pills filter by tag; the button opens the coin / Check a Coin.
   const DEC_TAGS = [["", "All"], ["BURN", "🔥 BURN"], ["BUYBACK", "💰 BUYBACK"], ["TOKENOMICS", "⚙️ TOKENOMICS"], ["UPGRADE", "🚀 UPGRADE"]];
+  // Arabic summary line per tag (fixed text - the title itself is translated at scan time)
+  const DEC_AR = {BURN: "🔥 قرار حرق: تمت الموافقة على حرق التوكن أو تقليل المعروض",
+                  BUYBACK: "💰 قرار إعادة شراء: تمت الموافقة على إعادة شراء التوكن أو توزيع الإيرادات",
+                  TOKENOMICS: "⚙️ قرار اقتصاد التوكن: تغيير في الستاكينغ أو المكافآت أو الإصدار",
+                  UPGRADE: "🚀 قرار ترقية: إطلاق أو ترحيل أو إعادة تسمية المشروع"};
   let decRows = null, decTag = "";
   async function loadDecisions() {
     if (!decRows) {
@@ -3140,9 +3147,10 @@
         <span class="m">· MCap ${mcap}</span></div>
       <div><span class="tag">${esc(r.emoji + " " + r.tag)}</span> <span class="m">matched “${esc(r.keyword)}”</span></div>
       <div class="dectitle">${esc(r.title)}</div>
+      ${r.title_ar ? `<div class="dectitle" dir="rtl" lang="ar">${esc(r.title_ar)}</div>` : ""}
+      <div class="m" dir="rtl" lang="ar">${esc(DEC_AR[r.tag] || "")} · نسبة الموافقة <bdi dir="ltr">${r.approval_pct.toFixed(1)}%</bdi></div>
       <div class="m">${r.approval_pct.toFixed(1)}% ${esc(r.winning_choice)} · closed ${decClosed(r.closed_at)}</div>
       <div class="decact">
-        <a href="https://snapshot.org/#/${encodeURIComponent(r.space_id)}/proposal/${encodeURIComponent(r.proposal_id)}" target="_blank" rel="noopener">Open on Snapshot ↗</a>
         ${c ? `<a href="#${r.in_screener ? "coin" : "check"}/${c}">${r.in_screener ? "Check in Screener" : "Add to Screener"} →</a>`
             : '<span class="m">token not resolved</span>'}</div></div>`;
   }

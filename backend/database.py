@@ -211,6 +211,11 @@ _NEW_COLUMNS += [
     ("coins", "cmc_change_at", "TIMESTAMP", None),
 ]
 
+# Coin Decision page: the proposal title in Arabic (snapshot_scanner.py) - nullable.
+_NEW_COLUMNS += [
+    ("dao_catalyst_alerts", "title_ar", "TEXT", None),
+]
+
 # Favorites portfolio (added after the favorites tables were created).
 _NEW_COLUMNS += [
     ("favorite_profiles", "tracking_since", "TIMESTAMP",
