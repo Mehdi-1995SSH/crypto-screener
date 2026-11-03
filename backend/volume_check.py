@@ -144,6 +144,17 @@ def check_volume_rising(contract, chain):
             "transient": False}
 
 
+def daily_closes(contract, chain):
+    """[[YYYY-MM-DD, price], ...] - the last CoinGecko price of each UTC day from
+    the volume step's response (in memory, 0 calls); [] when there is none."""
+    platform = CHAIN_TO_CG_PLATFORM.get((chain or "").lower())
+    by_day = {}
+    for p in _prices.get((platform, (contract or "").lower()), []):
+        if len(p) >= 2 and p[1]:
+            by_day[datetime.fromtimestamp(p[0] / 1000, tz=timezone.utc).date().isoformat()] = p[1]
+    return [[d, by_day[d]] for d in sorted(by_day)]
+
+
 def check_price_gain(contract, chain):
     """Step 5b - DUAL PRICE GAIN, from the volume step's CoinGecko response (0
     extra calls): the current price vs the lowest price of the last 14 days
