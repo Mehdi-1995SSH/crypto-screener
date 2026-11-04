@@ -28,7 +28,6 @@
   header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
   h1 { font-size: 24px; margin: 0; letter-spacing: -0.5px; }
   h1 .dot { color: var(--good); }
-  .status { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
   .refreshbtn { all: unset; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
     color: var(--text); background: var(--card); }
   .refreshbtn:hover { border-color: var(--accent); }
@@ -190,8 +189,6 @@
     border-radius: 10px; padding: 10px 14px; margin: 0 0 12px; font-size: 13px; color: var(--muted); }
   .perfov b { color: var(--text); font-variant-numeric: tabular-nums; }
   .perfov a { color: var(--accent); text-decoration: none; cursor: pointer; }
-  .regime .verdict { flex-basis: 100%; color: var(--text); font-weight: 700; font-size: 14px; }
-  .regime .up { color: #3fb950; } .regime .down { color: #f85149; }
   .pchart { height: 380px; margin-top: 6px; }
   .pctools { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; }
   .pctools .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
@@ -582,16 +579,44 @@
   details.tbl summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
   details.tbl table { font-size: 12px; }
   details.tbl td, details.tbl th { padding: 6px 8px; }
+  /* ---- shadcn-inspired polish + top bar + Arabic tooltips ---- */
+  :root { --ring: rgba(88,166,255,.35); --radius: 12px; }
+  .card, .ratiocard, .perfov { border-radius: var(--radius); box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  thead th { font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0; background: #161b22; }
+  tbody tr { transition: background-color .15s; }
+  tbody tr:hover { background: rgba(255,255,255,.035); }
+  .badge, .sec, .tag, .chain { border-radius: 999px; }
+  .badge { padding: 2px 10px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+  .tab { border-radius: 8px; }
+  .tab[aria-selected="true"] { box-shadow: inset 0 0 0 1px rgba(88,166,255,.35); }
+  .refreshbtn:focus-visible, .tab:focus-visible, .sorth:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+  .topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px;
+    margin: 8px 0 18px; font-size: 13px; color: var(--muted); }
+  .tb-regime { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; color: var(--text); }
+  .tb-regime .up { color: var(--good); } .tb-regime .down { color: var(--low); }
+  .tb-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  .ib { all: unset; cursor: help; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-inline-start: 6px;
+    border-radius: 50%; border: 1px solid var(--border); color: var(--muted); font-size: 11px; line-height: 1;
+    vertical-align: middle; text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .ib:hover, .ib:focus-visible { color: var(--text); border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+  @media (pointer: coarse) { .ib { width: 22px; height: 22px; } }     /* finger-sized tap target */
+  .tipbox { position: absolute; z-index: 50; max-width: min(320px, calc(100vw - 16px)); padding: 8px 10px;
+    font-size: 13px; line-height: 1.7; color: var(--text); background: #1c2129; border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.45); text-align: right; pointer-events: none; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1><span class="dot">●</span> Crypto Screener</h1>
-    <div class="status"><span id="status">Loading…</span>
-      <button type="button" class="refreshbtn" id="refreshbtn" title="Load the latest data now">🔄 Refresh</button></div>
   </header>
-  <div class="sub">Data updates once a day (~11:00 UTC) · the page refreshes every 30 minutes · ranked by score (highest first)</div>
+  <div class="topbar">
+    <div class="tb-regime" id="tb-regime" dir="rtl" lang="ar" hidden></div>
+    <div class="tb-status"><span id="status">Loading…</span>
+      <span>Daily data ~11:00 UTC · page refreshes every 30 min · ranked by score</span>
+      <button type="button" class="refreshbtn" id="refreshbtn" title="Load the latest data now">🔄 Refresh</button></div>
+  </div>
 
   <div class="err" id="err"></div>
 
@@ -620,7 +645,6 @@
   <div class="badgelegend"><span>🆕 new — entered the list on the latest daily run</span>
     <span>🔥 hot — 24h volume above 25% of market cap</span>
     <span>🚨 / ⚠️ / 📈 volume 5x+ / 3–5x / 2–3x its 30-day average</span></div>
-  <div class="perfov regime" id="market-regime" hidden></div>
   <div class="card">
     <table data-table="active">
       <thead>
@@ -1237,17 +1261,14 @@
       </tbody></table></div></div>`;
   }
 
-  // Market Regime (BTC / ETH / SOL, 30d + 7d; refreshed every 7 days) - display only.
+  // Top bar: BTC market regime (market_regime.py, daily) - observation only.
+  const REGIME_TIP = "حالة السوق من سعر BTC: 🔴 إذا هبط 10% أو أكثر خلال 30 يوماً أو 8% خلال 5 أيام؛ 🟡 إذا هبط أكثر من 2% خلال 5 أيام أو كان سالباً خلال 30 يوماً؛ وإلا 🟢. للمراقبة فقط — لا تؤثر على الفلتر أو السكور. تُحدَّث مرة يومياً.";
   function renderRegime(r) {
-    const box = document.getElementById("market-regime");
-    if (!r || !r.state) { box.hidden = true; return; }
-    const pc = v => v == null ? "—" : `<b class="${v >= 0 ? "up" : "down"}">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</b>`;
-    const m = r.market;
-    box.innerHTML = `<div class="verdict">${r.emoji} Market State: ${esc(r.label)} —
-        <bdi dir="rtl" lang="ar">حالة السوق: ${esc(r.label_ar)}</bdi> (30d ${pc(m.d30)}, 7d ${pc(m.d7)})</div>`
-      + r.coins.map(c => `<span>${esc(c.symbol)} 30d: ${pc(c.d30)} | 7d: ${pc(c.d7)}</span>`).join("")
-      + `<span>Market (avg) 30d: ${pc(m.d30)} | 7d: ${pc(m.d7)}</span>`
-      + `<span>observation only · BTC / ETH / SOL · refreshed weekly${r.as_of ? " · " + esc(longDate(r.as_of.slice(0, 10))) : ""}</span>`;
+    const box = document.getElementById("tb-regime"), b = r && r.btc;
+    if (!b || !r.state) { box.hidden = true; return; }        // old-format row: status only
+    const pc = (k, v) => `<bdi dir="ltr">${k} ${v == null ? "—" : `<b class="${v >= 0 ? "up" : "down"}">${v >= 0 ? "+" : ""}${v.toFixed(1)}%</b>`}</bdi>`;
+    box.innerHTML = `<b>${r.emoji} حالة السوق: ${esc(r.label_ar)}</b>${tip(REGIME_TIP)}
+      <span><bdi dir="ltr">BTC ${fmtPrice(b.price)}</bdi> · ${pc("24h", b.d1)} · ${pc("5d", b.d5)} · ${pc("30d", b.d30)}</span>`;
     box.hidden = false;
   }
   function renderCoins(data) {
@@ -3401,6 +3422,102 @@
   });
 
   showView(location.hash.slice(1));
+
+  // ---- ⓘ Arabic explanations ---------------------------------------------
+  // One shared popover (hover / focus / tap, kept inside the viewport). Icons are
+  // added to known titles / headers by their text, so render functions stay unchanged.
+  function tip(text) { return ` <button type="button" class="ib" aria-label="شرح" data-tip="${esc(text)}">ⓘ</button>`; }
+  const TIP_HOLDERS = "عدد المحافظ التي تحمل العملة (CoinMarketCap DEX).";
+  const TIPS = [
+    ["table[data-table] thead th", {
+      "#": "ترتيب العملة في القائمة حسب السكور، الأعلى أولاً.",
+      "Name": "اسم العملة وشبكتها. الشارات: 🆕 دخلت القائمة في آخر تشغيل يومي · 🔥 حجم 24 ساعة فوق 25% من القيمة السوقية · 🚨/⚠️/📈 قفزة في الحجم مقارنة بمتوسط 30 يوماً · 🚨/🐋 رادار ما قبل الإدراج (نشاط منصات أو صناع سوق). اضغط الصف لفتح صفحة العملة.",
+      "Price": "آخر سعر بالدولار (يُحدَّث كل ساعة للعملات النشطة).",
+      "Score": "تقييم من 0 إلى 100 من 6 مكوّنات: الدوران والامتصاص 30، المشترون 25، الحاملون 20، السيولة والبنية 15، الترتيب 5، رخص السعر 5. الأعلى أفضل.",
+      "P&L": "تغيّر السعر منذ دخول العملة قائمة النشطة (أو منذ إضافتها إلى المفضلة).",
+      "Market Cap": "القيمة السوقية = السعر × المعروض المتداول (CoinGecko / CoinMarketCap).",
+      "Revenue/day": "متوسط إيرادات البروتوكول اليومية من DefiLlama («—» إذا لم يكن مُدرجاً).",
+      "Liquidity": "سيولة مجمّعات DEX المتفق عليها بين DexScreener وCodex وBirdeye؛ ⚠️ تعني اختلاف المصادر.",
+      "Holders": TIP_HOLDERS,
+      "Narrative": "قطاع العملة أو قصتها (مثل DeFi أو الذكاء الاصطناعي) من CoinGecko.",
+      "Date dropped": "تاريخ استبعاد العملة من قائمة النشطة.",
+      "Reason": "سبب الاستبعاد: أول قاعدة خروج انطبقت (تراجع الحجم أو السيولة أو وقف الخسارة…).",
+      "Added": "تاريخ إضافة العملة إلى هذا الملف.",
+      "Held": "عدد الأيام منذ إضافة العملة إلى هذا الملف."}],
+    ["section.view > h2", {
+      "Active coins": "العملات التي اجتازت خطوات الفلتر السبع وما زالت تحت المتابعة، مرتبة حسب السكور. تُحدَّث يومياً حوالي 11:00 UTC.",
+      "Dropped coins": "عملات كانت نشطة ثم استُبعدت لأن قاعدة خروج انطبقت عليها؛ نحتفظ بها لمتابعة ما حدث بعد الاستبعاد.",
+      "Check a coin": "افحص أي عقد: نطبّق عليه نفس خطوات الفلتر والسكور مباشرة ونعرض كل البيانات ونقاش الوكلاء.",
+      "Coin Decision": "قرارات حوكمة ناجحة على Snapshot (حرق، إعادة شراء، اقتصاد التوكن، ترقيات) لعملات حقيقية خلال آخر 30 يوماً."}],
+    [".scoretable td.rowlbl", {
+      "Turnover & absorption": "الدوران: حجم 24 ساعة كنسبة من القيمة السوقية عبر كل المنصات (20) + الامتصاص الهادئ: حجم مرتفع دون هبوط السعر (10).",
+      "Buyers": "نسبة المشترين إلى البائعين على DEX خلال 15 يوماً — فوق 1 تعني ضغط شراء (25).",
+      "Holders": "نمو عدد الحاملين خلال 7 أيام (15) وسرعة هذا النمو (5).",
+      "Liquidity & structure": "نمو السيولة خلال 7 أيام (10) وبنية السعر (5).",
+      "Rank": "تحسّن ترتيب القيمة السوقية مقارنة بالأسبوع الماضي (5).",
+      "Cheapness": "قرب السعر من قيعانه الأخيرة — الأرخص يأخذ نقاطاً أكثر (5)."}],
+    ["h3", {
+      "All Score": "سجل السكور لآخر 7 أيام ومكوّناته الستة؛ اضغط يوماً لمعرفة ما تغيّر. * = لا بيانات ذلك اليوم فاستُخدم وسيط العملات النشطة.",
+      "Entry Zone": "موقع السعر داخل نطاق آخر 60 يوماً، مقسّم إلى مناطق (أفضل دخول / جيد / تجميع / انتظار)، مع الارتفاع فوق قاع 14 و60 يوماً.",
+      "Price Range": "أعلى سعر (ATH) وأدنى سعر (ATL) في تاريخ العملة، وموقع السعر الحالي بينهما: 0% عند القاع و100% عند القمة.",
+      "Price": "شموع السعر من GeckoTerminal مع خطَّي قاع 14 و60 يوماً، وأدوات القياس والرسم.",
+      "Relative Strength": "تغيّر العملة خلال 24 ساعة مقارنة بـBTC وبقطاعها: هل تصعد بقوتها الذاتية أم تتبع السوق؟",
+      "Transactions": "صفقات الشراء والبيع اليومية على DEX لآخر 15 يوماً (الأخضر شراء والأحمر بيع) مع عدد المشترين والبائعين.",
+      "Volume / Market cap": "حجم التداول كنسبة من القيمة السوقية — مقياس لنشاط التداول.",
+      "Volume / Liquidity": "حجم التداول كمضاعف للسيولة — كلما ارتفع زاد الطلب مقارنة بعمق السوق.",
+      "Holders": "عدد الحاملين يومياً وتغيّره خلال أسبوع.",
+      "Liquidity": "سيولة DEX الحالية ونموها خلال 4 ساعات و24 ساعة و7 أيام، ونسبتها إلى القيمة السوقية.",
+      "💧 Liquidity Sources": "مقارنة سيولة DexScreener وCodex وBirdeye؛ صحية إذا تجاوز مصدران من ثلاثة 5,000$.",
+      "Rank": "ترتيب القيمة السوقية على CoinGecko وCoinMarketCap وتغيّره خلال أسبوع.",
+      "Revenue": "إيرادات البروتوكول اليومية من DefiLlama لآخر 15 يوماً، ونسبة القيمة السوقية إلى الإيرادات السنوية.",
+      "Exchange Listings": "المنصات المركزية (من 12 منصة نراقبها) التي تُدرج العملة، والإدراجات الجديدة أو المجدولة أو الشطب.",
+      "Futures Data": "بيانات العقود الآجلة (Coinalyze) إن وُجدت: الاهتمام المفتوح OI، ونسبة التمويل (سلبية = البائعون يدفعون)، ونسبة المراكز الشرائية.",
+      "Supply": "المعروض الكلي والمتداول والأقصى، والمحروق على السلسلة، وإعادة الشراء الموثّقة (4 أدلة صارمة فقط).",
+      "Upcoming Unlocks": "مواعيد فتح التوكنات القادمة وقيمتها كنسبة من القيمة السوقية — الفتح الكبير قد يسبب ضغط بيع.",
+      "🚨 Pre-Listing": "نشاط على السلسلة يسبق الإدراج عادةً: محافظ منصات مركزية أو صناع سوق تستلم التوكن من محافظ الفريق.",
+      "⚖️ نقاش الوكلاء": "تحليل آلي حتمي من أرقام هذه الصفحة: الوكيل الإيجابي يجمع نقاط القوة والسلبي يجمع المخاطر ثم يوازن المدير بينهما. ليس نصيحة مالية.",
+      "Performance Since Caught": "أداء السعر منذ دخول العملة القائمة: التغيّر الحالي وأعلى وأدنى سعر منذ ذلك اليوم.",
+      "Smart Money": "قريباً: نشاط الحيتان والمحافظ الذكية.",
+      "Analysis": "الأرقام التي ينظر إليها الفلتر: القيمة السوقية والعمر واتجاه الحجم والسيولة والإيرادات واختبار الـhoneypot.",
+      "Score": "نفس سكور العملات النشطة محسوباً مباشرة؛ الأجزاء التي تحتاج سجلنا اليومي تأخذ وسيط العملات النشطة.",
+      "Filter steps": "خطوات الفلتر السبع بنفس ترتيب البوت؛ أول ✗ هو سبب الرفض."}],
+  ];
+  function addTips(root) {
+    for (const [sel, map] of TIPS) {
+      const keys = Object.keys(map).sort((a, b) => b.length - a.length);      // longest match wins
+      root.querySelectorAll(sel).forEach(el => {
+        if (el.querySelector(":scope > .ib")) return;
+        const txt = el.textContent.trim(), key = keys.find(k => txt.startsWith(k));
+        if (key) el.insertAdjacentHTML("beforeend", tip(map[key]));
+      });
+    }
+  }
+  let tipRaf = 0;
+  new MutationObserver(() => { cancelAnimationFrame(tipRaf); tipRaf = requestAnimationFrame(() => addTips(document.body)); })
+    .observe(document.body, {childList: true, subtree: true});
+  addTips(document.body);
+  const tipBox = Object.assign(document.createElement("div"), {className: "tipbox", id: "tipbox", hidden: true, dir: "rtl", lang: "ar"});
+  tipBox.setAttribute("role", "tooltip");
+  document.body.append(tipBox);
+  let tipFor = null;
+  function showTip(b) {
+    if (tipFor && tipFor !== b) tipFor.removeAttribute("aria-describedby");
+    tipFor = b; tipBox.textContent = b.dataset.tip; tipBox.hidden = false; b.setAttribute("aria-describedby", "tipbox");
+    const r = b.getBoundingClientRect(), w = tipBox.offsetWidth, h = tipBox.offsetHeight, W = document.documentElement.clientWidth;
+    const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), W - w - 8);           // never past either edge
+    const top = r.bottom + 6 + h > innerHeight && r.top - h - 6 > 0 ? r.top - h - 6 : r.bottom + 6;
+    tipBox.style.left = left + scrollX + "px"; tipBox.style.top = top + scrollY + "px";
+  }
+  function hideTip() { if (tipFor) tipFor.removeAttribute("aria-describedby"); tipFor = null; tipBox.hidden = true; }
+  document.addEventListener("mouseover", e => { const b = e.target.closest(".ib"); if (b) showTip(b); });
+  document.addEventListener("mouseout", e => { if (e.target.closest(".ib")) hideTip(); });
+  document.addEventListener("focusin", e => { const b = e.target.closest(".ib"); if (b) showTip(b); });
+  document.addEventListener("focusout", e => { if (e.target.closest(".ib")) hideTip(); });
+  // capture phase: a tap on ⓘ shows the tip and never sorts a column / opens a row / switches a view
+  document.addEventListener("click", e => { const b = e.target.closest(".ib");
+    if (b) { e.preventDefault(); e.stopPropagation(); showTip(b); } else hideTip(); }, true);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") hideTip(); });
+  addEventListener("scroll", hideTip, {passive: true});
 
   // ---- data loading -------------------------------------------------------
   async function loadData() {
