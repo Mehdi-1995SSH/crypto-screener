@@ -3492,8 +3492,8 @@
       });
     }
   }
-  let tipRaf = 0;
-  new MutationObserver(() => { cancelAnimationFrame(tipRaf); tipRaf = requestAnimationFrame(() => addTips(document.body)); })
+  let tipTimer = 0;      // setTimeout, not requestAnimationFrame: rAF doesn't run in background tabs
+  new MutationObserver(() => { clearTimeout(tipTimer); tipTimer = setTimeout(() => addTips(document.body), 30); })
     .observe(document.body, {childList: true, subtree: true});
   addTips(document.body);
   const tipBox = Object.assign(document.createElement("div"), {className: "tipbox", id: "tipbox", hidden: true, dir: "rtl", lang: "ar"});
@@ -3503,6 +3503,7 @@
   function showTip(b) {
     if (tipFor && tipFor !== b) tipFor.removeAttribute("aria-describedby");
     tipFor = b; tipBox.textContent = b.dataset.tip; tipBox.hidden = false; b.setAttribute("aria-describedby", "tipbox");
+    tipBox.style.left = tipBox.style.top = "0px";        // measure at the left edge: its width depends on the room to its right
     const r = b.getBoundingClientRect(), w = tipBox.offsetWidth, h = tipBox.offsetHeight, W = document.documentElement.clientWidth;
     const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), W - w - 8);           // never past either edge
     const top = r.bottom + 6 + h > innerHeight && r.top - h - 6 > 0 ? r.top - h - 6 : r.bottom + 6;
