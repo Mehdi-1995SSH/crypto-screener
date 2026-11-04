@@ -534,7 +534,7 @@
   .eztable th, .eztable td { padding: 9px 12px; text-align: center; border-bottom: 1px solid var(--border); }
   .eztable th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--bg); text-transform: none; letter-spacing: 0; }
   .eztable tbody tr:nth-child(odd) td { background: rgba(255,255,255,0.025); }
-  .eztable td.lbl { text-align: right; font-weight: 600; white-space: nowrap; }
+  .eztable td.lbl { text-align: right; font-weight: 600; }   /* wraps: long labels (e.g. Liquidity + chain note) overflowed */
   .eztable tr.here td { background: rgba(88,166,255,0.14) !important; font-weight: 700; }
   .eztable .mark { color: var(--accent); font-weight: 700; white-space: nowrap; }
   .eztable .up { color: var(--good); font-weight: 700; } .eztable .down { color: var(--low); font-weight: 700; }
@@ -544,7 +544,6 @@
     .eztable { font-size: 12px; }
     .eztable th, .eztable td { padding: 7px 4px; }
     .eztable th { font-size: 11px; }
-    .eztable td.lbl { white-space: normal; }
   }
   .ezfoot { font-size: 11px; color: var(--muted); margin-top: 8px; text-align: right; }
   /* Relative Strength section */
@@ -1850,7 +1849,6 @@
           <div class="v mono" data-addr="${esc(c.contract)}" title="Click to copy">${esc(c.contract)}</div></div>
       </div>
       ${preListingCard(c.pre_listing)}
-      ${debateCard(c.debate)}
       ${allScoreCard(c.score_history)}
       ${futuresCard(c.futures)}
       ${priceChartCard(c.price_chart, "coin")}
@@ -1872,7 +1870,8 @@
       ${supplyCard(c)}
       ${exchangeListingsCard(c.listings)}
       ${unlocksCard(c.unlocks)}
-      ${smartMoneyCard()}`;
+      ${smartMoneyCard()}
+      ${debateCard(c.debate)}`;
     wireHolders((c.holders || {}).bars || []);
     wireBars("rplot", "rtip", ((c.revenue || {}).bars) || [],
              b => `<b>${esc(longDate(b.date))}</b><br>Revenue ${fmtUsd(b.revenue)}`);
