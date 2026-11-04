@@ -480,76 +480,11 @@ def run_check(contract):
         "verdict": verdict,
         "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    result["summary"], result["opinion"] = summarize(result)
+    import debate_verdict
+    result["debate"] = debate_verdict.for_check(result)   # Arabic Bull vs Bear card (replaces the Summary)
     # A Coinalyze hiccup isn't cached for the day either.
     result["_transient"] = pending or bool(result["futures"].pop("error", False))
     return result
-
-
-def summarize(r):
-    """Plain-language description (in Arabic) of what the on-chain numbers
-    show, plus a short factual take. Numbers, dates and source names stay
-    left-to-right. Not investment advice - no buy / sell language."""
-    from relative_strength import _ltr
-    parts, plus, minus, has_revenue = [], 0, 0, False
-
-    def pct0(x):
-        return _ltr(format(x, "+.0f") + "%")
-
-    def pct1(x):
-        return _ltr(format(x, "+.1f") + "%")
-    v = r["volume"]
-    if v["pct"] is not None:
-        if v["pct"] >= 35:
-            parts.append(f"الحجم يرتفع بقوة خلال آخر 5 أيام ({pct0(v['pct'])})."); plus += 2
-        elif v["pct"] > 0:
-            parts.append(f"الحجم ارتفع قليلاً خلال آخر 5 أيام ({pct0(v['pct'])})."); plus += 1
-        else:
-            parts.append(f"الحجم ينخفض خلال آخر 5 أيام ({pct0(v['pct'])})."); minus += 1
-    else:
-        parts.append("لا يوجد سجل حجم كافٍ للحكم على الاتجاه.")
-    lq = r["liquidity"]
-    since = _ltr(lq["since"]) if lq.get("since") else ""
-    if lq["trend"] == "rising":
-        parts.append(f"السيولة تتزايد ({pct1(lq['pct'])} منذ {since})."); plus += 1
-    elif lq["trend"] == "stable":
-        parts.append(f"السيولة مستقرة تقريباً ({pct1(lq['pct'])} منذ {since}).")
-    elif lq["trend"] == "falling":
-        parts.append(f"السيولة تتناقص ({pct1(lq['pct'])} منذ {since})."); minus += 1
-    else:
-        parts.append("سجل السيولة غير متاح.")
-    rv = r["revenue"]
-    llama = _ltr("DefiLlama")
-    if rv["status"] == "ok" and (rv.get("d30") or 0) > 0:
-        d30 = _ltr("$" + format(rv["d30"], ",.0f"))
-        parts.append(f"يحقق إيرادات فعلية ({d30} خلال آخر 30 يوماً، حسب {llama})."); plus += 1
-        has_revenue = True
-    elif rv["status"] == "ok":
-        parts.append(f"يتتبّعه {llama} لكنه لا يُظهر إيرادات خلال آخر 30 يوماً."); minus += 1
-    else:
-        parts.append(f"لا توجد بيانات إيرادات (لا يتتبّعه {llama}).")
-    sc = r.get("score") or {}
-    if sc.get("full_max"):
-        tot, mx = sc["total"], sc["full_max"]
-        if tot >= 32:                      # the site's green badge (about the top 20%)
-            parts.append(f"تقدير النقاط مرتفع ({_ltr(f'{tot}/{mx}')})."); plus += 1
-        elif tot < 15:                     # red badge (about the bottom 40%)
-            parts.append(f"تقدير النقاط منخفض ({_ltr(f'{tot}/{mx}')}) — إشارات الشراء ضعيفة حالياً."); minus += 1
-    vd = r["verdict"]
-    parts.append("يجتاز خطوات الفلتر السبع كلها." if vd["passes"] else
-                 f"لا يجتاز الفلتر: {vd['reason']}." if vd["passes"] is False else vd["reason"])
-
-    if plus >= 3 and minus == 0 and has_revenue:
-        opinion = "إشارات قوية على السلسلة: النشاط والسيولة في نمو، وتدعمهما إيرادات فعلية."
-    elif plus >= 3 and minus == 0:
-        opinion = "إشارات قوية في النشاط والسيولة، لكن لا توجد بيانات إيرادات تدعمها."
-    elif plus > minus:
-        opinion = "إشارات إيجابية في معظمها، لكنها لا تتوافق كلها."
-    elif minus > plus:
-        opinion = "إشارات ضعيفة: النشاط يتراجع، أو أن الأساسيات التي يبحث عنها الفلتر غائبة."
-    else:
-        opinion = "إشارات متباينة: لا شيء يبرز بقوة في أي اتجاه."
-    return " ".join(parts), opinion + " هذا وصف للبيانات على السلسلة فقط — وليس نصيحة مالية."
 
 
 def check_score(md, mcap, ez, contract, chain, liq, daily, dex_liq):
@@ -757,7 +692,7 @@ def rules_signature():
     from volume_check import VOLUME_MIN_RISE
     from liquidity_check import MAX_DROP_PCT, MIN_LIQUIDITY_USD
     return (f"mcap {MIN_MCAP}-{MAX_MCAP}|age {MIN_AGE_DAYS}|vol {VOLUME_MIN_RISE}|liq {MAX_DROP_PCT}/{MIN_LIQUIDITY_USD}"
-            "|pricerange|relstrength-ar|summary-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb|gain1|buyers1|pchart2"
+            "|pricerange|relstrength-ar|debate-ar|twitter-cmc|entryzone2|futures|score3|supply|ez-tracked|listings|volspike|burn|sec3|txfb|gain1|buyers1|pchart2"
             "|liq3src|liq3k|score-v3")   # result layout: has these display sections
 
 

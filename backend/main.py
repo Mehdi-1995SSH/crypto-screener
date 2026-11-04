@@ -590,6 +590,7 @@ def get_coin(contract: str):
         from entry_zone import load_bars
         from tx_bars import GT_NETWORKS
         from pre_listing_radar import for_coin as prelisting_for
+        from debate_verdict import for_coin as debate_for
         from concurrent.futures import ThreadPoolExecutor
 
         def own_session(fn, *args):
@@ -680,7 +681,7 @@ def get_coin(contract: str):
         mcap_7d = snap_7d.mcap if snap_7d else mcap       # fallback: today's
         growth_7d = ((liq_now - liq_7d) / liq_7d * 100) if liq_now is not None and liq_7d else None
         this_week, last_week = ratio(liq_now, mcap, 100), ratio(liq_7d, mcap_7d, 100)
-        return {
+        payload = {
             "name": coin.name,
             "symbol": q[0] if q else None,
             "chain": coin.chain,
@@ -755,6 +756,9 @@ def get_coin(contract: str):
                                         if this_week is not None and last_week is not None else None),
                              "last_week_mcap_approx": snap_7d is None},
         }
+        # Bull vs Bear debate (Arabic): from the numbers above + 3 small DB reads, no API / LLM call
+        payload["debate"] = debate_for(session, coin, payload)
+        return payload
     finally:
         session.close()
 

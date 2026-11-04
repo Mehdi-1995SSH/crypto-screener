@@ -549,6 +549,14 @@
   .rsv.WEAK { color: var(--low); background: rgba(248,81,73,0.10); border-color: rgba(248,81,73,0.45); }
   .opinion.rtl { border-left: none; border-right: 3px solid var(--accent); border-radius: 8px 0 0 8px;
                  text-align: right; font-size: 15px; line-height: 1.7; }
+  .debate .dbgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+  .debate .dbside { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .debate .dbside.bull { border-color: rgba(63,185,80,.45); } .debate .dbside.bear { border-color: rgba(248,81,73,.45); }
+  .debate h4 { margin: 0 0 6px; font-size: 15px; display: flex; justify-content: space-between; gap: 8px; }
+  .debate ul.dbl { margin: 0; padding-inline-start: 18px; line-height: 1.8; font-size: 14px; }
+  .debate .dbverdict { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; line-height: 1.8; }
+  .debate .dbverdict .dir { font-size: inherit; }
+  @media (max-width: 600px) { .debate .dbgrid { grid-template-columns: 1fr; } }
   .supply .val.up { color: var(--good); } .supply .val.down { color: var(--low); }
   .prends { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted);
             font-variant-numeric: tabular-nums; margin: 0 0 12px; }
@@ -1574,6 +1582,23 @@
     const icon = rules.includes("CEX_DEPOSIT") || rules.includes("MM_TO_CEX") ? "🚨" : "🐋";
     return `<span class="plbadge" title="${esc("Pre-listing / MM activity: " + rules.map(r => PL_RULES[r] || r).join(" · "))}">${icon}</span>`;
   }
+  // ⚖️ Bull vs Bear debate (debate_verdict.py): deterministic, from this page's numbers only - no AI call.
+  function debateCard(d) {
+    if (!d) return "";
+    const list = xs => xs.length ? `<ul class="dbl">${xs.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`
+                                 : `<div class="note">لا توجد نقاط في هذا الجانب.</div>`;
+    const tone = d.direction_outlook_ar.startsWith("🟢") ? "up" : d.direction_outlook_ar.startsWith("🔴") ? "down" : "flat";
+    return `<div class="ratiocard debate" dir="rtl" lang="ar"><h3>⚖️ نقاش الوكلاء والحكم النهائي</h3>
+      <div class="note">تحليل آلي من الأرقام المعروضة في هذه الصفحة فقط — دون أي ذكاء اصطناعي خارجي.</div>
+      <div class="dbgrid">
+        <div class="dbside bull"><h4>🐂 الوكيل الإيجابي - نقاط القوة والصعود <bdi dir="ltr">${d.bull_score}/100</bdi></h4>${list(d.bull_points)}</div>
+        <div class="dbside bear"><h4>🐻 الوكيل السلبي - نقاط الحذر والمخاطر <bdi dir="ltr">${d.risk_score}/100</bdi></h4>${list(d.bear_points)}</div>
+      </div>
+      <div class="dbverdict"><h4>⚖️ حكم المدير النهائي وتوقع الاتجاه</h4>
+        <div>المرحلة الحالية: <b>${esc(d.stage_ar)}</b></div>
+        <div>التوقع: <b class="dir ${tone}">${esc(d.direction_outlook_ar)}</b> · الثقة: <b><bdi dir="ltr">${d.confidence_score}%</bdi></b></div>
+        <p style="margin:6px 0 0">${esc(d.final_verdict_ar)}</p></div></div>`;
+  }
   function preListingCard(list) {
     if (!list || !list.length) return "";
     return `<div class="card plcard"><h3>🚨 Pre-Listing / MM Activity</h3>
@@ -1819,6 +1844,7 @@
           <div class="v mono" data-addr="${esc(c.contract)}" title="Click to copy">${esc(c.contract)}</div></div>
       </div>
       ${preListingCard(c.pre_listing)}
+      ${debateCard(c.debate)}
       ${allScoreCard(c.score_history)}
       ${futuresCard(c.futures)}
       ${priceChartCard(c.price_chart, "coin")}
@@ -2293,9 +2319,7 @@
       <div class="ratiocard"><h3>Filter steps</h3>
         <div class="note">Same order as the bot; the first ✗ is the reason above.</div>
         <ul class="supply steps">${steps}</ul></div>
-      <div class="ratiocard"><h3>Summary</h3>
-        <div dir="rtl" lang="ar" style="font-size:15px;line-height:1.8;text-align:right">${esc(r.summary || "")}</div>
-        <div class="opinion rtl" dir="rtl" lang="ar">${esc(r.opinion || "")}</div></div>`;
+      ${debateCard(r.debate)}`;
     wireChart(r.tx_bars || [], "ck");
     if (r.price_chart) renderPriceChart("ck", r.price_chart);
   }
