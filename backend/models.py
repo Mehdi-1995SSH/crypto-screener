@@ -898,7 +898,7 @@ class MarketRegime(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     day = Column(Date, nullable=False, unique=True)
-    data = Column(Text, nullable=False)                        # JSON (market_regime.from_markets + as_of)
+    data = Column(Text, nullable=False)                        # JSON (market_regime.from_chart + as_of)
     computed_at = Column(DateTime)
 
 
