@@ -77,6 +77,9 @@ class Coin(Base):
     burn_frequency = Column(String)         # NONE / ONE_TIME / DAILY / WEEKLY / MONTHLY / IRREGULAR
     last_burn_at = Column(DateTime)
     burn_checked_at = Column(DateTime)      # None = never checked
+    burn_events = Column(Integer)           # burns seen in the scan window (display only)
+    burn_events_capped = Column(Boolean)    # True = the window was full (EVM 10 / Solana 100) -> "N+"
+
     # X / Twitter handle from CoinGecko (socials.py) - display only.
     twitter_handle = Column(String)         # None = no handle on CoinGecko
     twitter_checked_at = Column(DateTime)   # None = never checked yet

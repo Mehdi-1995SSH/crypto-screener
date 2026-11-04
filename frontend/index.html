@@ -474,6 +474,11 @@
   .supply .val { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
   .supply .val small { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 6px; }
   .supply li.soon .val { color: var(--muted); font-weight: 600; }
+  .supply li.burnli { display: block; }
+  .burnbox { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin-top: 8px; font-size: 14px; }
+  .burnbox dt { color: var(--muted); }
+  .burnbox dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+  @media (max-width: 520px) { .burnbox { grid-template-columns: 1fr; gap: 2px; } .burnbox dd { margin-bottom: 6px; } }
   .sbig { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 6px; }
   .sbig small { font-size: 14px; font-weight: 500; color: var(--muted); }
   .sbar { display: inline-block; width: 70px; height: 6px; border-radius: 3px; background: var(--border);
@@ -2575,23 +2580,42 @@
         <li><span class="lbl">Circulating supply<small>tokens in circulation</small></span>
             <span class="val"${exact(sp.circulating)}>${fmtSupply(sp.circulating)}${pct}</span></li>
         <li><span class="lbl">Max supply<small>the absolute cap${minting ? " · " + fmtSupply(sp.max - sp.total) + " above total supply" : ""}</small></span>${max}</li>
-        ${burnedRow(sp.burned)}
+        ${burnedRow(sp.burned, c.symbol)}
       </ul></div>`;
   }
-  // Burned: EVM - tokens in the 0x…dEaD / 0x…0000 / 0x…0001 wallets (or
-  // _burn()ed), via Etherscan or a public RPC; Solana - Helius. No % = only
-  // the recent burns Helius sampled are known (total unknown).
-  function burnedRow(b) {
+  // Burned: the 4 burn models (burn_detector.py classification, stored by the daily run):
+  // active / buyback & burn, one-time pre-burn, active with unknown total, no burn.
+  // Event counts come from the scan window (EVM: last 10 burns, Solana: 100 txs -> "N+").
+  const BURN_STATUS = {BUYBACK_AND_BURN: "🔥 Real Market Buyback & Burn (BUYBACK_AND_BURN)",
+                       ACTIVE_BURN: "⏳ Active & Ongoing Burn (ACTIVE_BURN)",
+                       STATIC_PRE_BURN: "⚠️ One-Time Marketing / Launch Pre-Burn Only (STATIC_PRE_BURN)"};
+  const BURN_CADENCE = {DAILY: "📅 Daily (DAILY)", WEEKLY: "📅 Weekly (WEEKLY)", MONTHLY: "📅 Monthly (MONTHLY)",
+                        IRREGULAR: "🔁 Recurring, irregular (IRREGULAR)", ONE_TIME: "🛑 One-time only (ONE_TIME)"};
+  function burnedRow(b, symbol) {
     const lbl = small => `<span class="lbl">Burned<small>${small}</small></span>`;
     if (!b) return `<li class="soon">${lbl("EVM / Solana coins · not checked yet")}<span class="val">—</span></li>`;
-    if (b.status === "NO_BURN") return `<li>${lbl("on-chain")}<span class="val">0 <small>No burns</small></span></li>`;
-    const label = {STATIC_PRE_BURN: "One-time burn", ACTIVE_BURN: "Active burn", BUYBACK_AND_BURN: "Buyback &amp; burn"}[b.status] || esc(b.status);
-    const freq = b.frequency && !["NONE", "ONE_TIME"].includes(b.frequency) ? " · " + b.frequency.toLowerCase() : "";
-    const last = b.days_since_last_burn == null ? "" : ` · last ${b.days_since_last_burn === 0 ? "today" : b.days_since_last_burn + "d ago"}`;
-    if (b.pct == null && b.amount != null)
-      return `<li>${lbl(label + freq + " · 100+ recent burns, total unknown" + last)}<span class="val" title="${Math.round(b.amount).toLocaleString()} in the last 100 burns">≥ ${fmtSupply(b.amount)}</span></li>`;
-    const pct = b.pct == null ? "" : (b.pct < 0.01 ? "<0.01" : b.pct.toFixed(2)) + "% · ";
-    return `<li>${lbl(label + freq + last)}<span class="val" title="${b.amount == null ? "" : Math.round(b.amount).toLocaleString()}">${pct}${fmtSupply(b.amount)}</span></li>`;
+    const rows = pairs => `<li class="burnli">${lbl("on-chain burn breakdown")}<dl class="burnbox">${
+      pairs.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl></li>`;
+    if (b.status === "NO_BURN")
+      return rows([["Does it burn?", "NO"], ["Burn status", "❌ NO_BURN (0%) — This token has no burn mechanism."]]);
+    const sym = symbol ? " " + esc(symbol) : "";
+    const statik = b.status === "STATIC_PRE_BURN";
+    const count = b.events ? ` · ${b.events}${b.events_capped ? "+" : ""} burn event${b.events === 1 && !b.events_capped ? "" : "s"}` : "";
+    const cadence = (BURN_CADENCE[statik ? "ONE_TIME" : b.frequency] || esc(b.frequency || "—")) + count;
+    const amount = b.pct == null
+      ? `Unknown total % (exceeded 100 burn events / uncapped supply) · Recent burned: ${fmtSupply(b.amount)}${sym}`
+      : `${fmtSupply(b.amount)}${sym} (${b.pct < 0.01 ? "<0.01" : b.pct.toFixed(2)}%)`;
+    let last = "Unknown (no burn transfer in the recent scan window)";
+    if (b.last_burn_at) {
+      const h = (Date.now() - Date.parse(b.last_burn_at)) / 3.6e6, day = b.last_burn_at.slice(0, 10);
+      const ago = h < 1 ? "just now" : h < 24 ? `${Math.floor(h)}h ago` : `${Math.floor(h / 24)} day${h < 48 ? "" : "s"} ago`;
+      last = `${ago} (${day}${statik && h >= 24 * 30 ? " · no recent burns" : ""})`;
+    }
+    return rows([["Does it burn?", statik ? "YES (Static Pre-Burn Only)" : "YES (Active Burn)"],
+                 ["Burn status &amp; type", BURN_STATUS[b.status] || esc(b.status)],
+                 ["Burn cadence &amp; count", cadence],
+                 ["Burned amount &amp; %", amount],
+                 ["Last burn date", last]]);
   }
   // Price Range (All-Time): CoinGecko ATH / ATL and where today's price sits
   // between them (0% = at the all-time low, 100% = at the all-time high).
