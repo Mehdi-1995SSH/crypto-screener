@@ -222,6 +222,14 @@ _NEW_COLUMNS += [
     ("coins", "burn_events_capped", "BOOLEAN", None),
 ]
 
+# Verified buyback (buyback_detector.py) - nullable, display only.
+_NEW_COLUMNS += [
+    ("coins", "buyback_verified", "BOOLEAN", None), ("coins", "buyback_proofs", "VARCHAR", None),
+    ("coins", "buyback_note", "TEXT", None), ("coins", "buyback_usd_24h", "FLOAT", None),
+    ("coins", "buyback_usd_30d", "FLOAT", None), ("coins", "buyback_last_tx", "VARCHAR", None),
+    ("coins", "buyback_last_at", "TIMESTAMP", None), ("coins", "buyback_checked_at", "TIMESTAMP", None),
+]
+
 # Favorites portfolio (added after the favorites tables were created).
 _NEW_COLUMNS += [
     ("favorite_profiles", "tracking_since", "TIMESTAMP",

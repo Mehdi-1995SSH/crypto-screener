@@ -2572,7 +2572,7 @@
     const minting = sp.max != null && sp.total != null && sp.max > sp.total * 1.0001;
     const none = sp.total == null && sp.circulating == null && sp.max == null;
     return `<div class="ratiocard"><h3>Supply</h3>
-      <div class="note">CoinGecko / CoinMarketCap (whole coin, all chains); Burned: on-chain, this contract. Updated by the daily run.</div>
+      <div class="note">CoinGecko / CoinMarketCap (whole coin, all chains); Burned / Buyback: on-chain, this contract (buyback also DefiLlama / Snapshot). Updated by the daily run.</div>
       ${none ? `<div class="note" style="margin:0 0 10px">No supply data yet - it's filled in by the next daily run.</div>` : ""}
       <ul class="supply">
         <li><span class="lbl">Total supply<small>tokens that exist now</small></span>
@@ -2581,6 +2581,7 @@
             <span class="val"${exact(sp.circulating)}>${fmtSupply(sp.circulating)}${pct}</span></li>
         <li><span class="lbl">Max supply<small>the absolute cap${minting ? " · " + fmtSupply(sp.max - sp.total) + " above total supply" : ""}</small></span>${max}</li>
         ${burnedRow(sp.burned, c.symbol)}
+        ${buybackRow(sp.buyback, c.chain)}
       </ul></div>`;
   }
   // Burned: the 4 burn models (burn_detector.py classification, stored by the daily run):
@@ -2607,15 +2608,46 @@
       : `${fmtSupply(b.amount)}${sym} (${b.pct < 0.01 ? "<0.01" : b.pct.toFixed(2)}%)`;
     let last = "Unknown (no burn transfer in the recent scan window)";
     if (b.last_burn_at) {
-      const h = (Date.now() - Date.parse(b.last_burn_at)) / 3.6e6, day = b.last_burn_at.slice(0, 10);
-      const ago = h < 1 ? "just now" : h < 24 ? `${Math.floor(h)}h ago` : `${Math.floor(h / 24)} day${h < 48 ? "" : "s"} ago`;
-      last = `${ago} (${day}${statik && h >= 24 * 30 ? " · no recent burns" : ""})`;
+      const h = (Date.now() - Date.parse(b.last_burn_at)) / 3.6e6;
+      last = `${agoText(b.last_burn_at)} (${b.last_burn_at.slice(0, 10)}${statik && h >= 24 * 30 ? " · no recent burns" : ""})`;
     }
     return rows([["Does it burn?", statik ? "YES (Static Pre-Burn Only)" : "YES (Active Burn)"],
                  ["Burn status &amp; type", BURN_STATUS[b.status] || esc(b.status)],
                  ["Burn cadence &amp; count", cadence],
                  ["Burned amount &amp; %", amount],
                  ["Last burn date", last]]);
+  }
+  function agoText(iso) {
+    const h = (Date.now() - Date.parse(iso)) / 3.6e6;
+    return h < 1 ? "just now" : h < 24 ? `${Math.floor(h)}h ago` : `${Math.floor(h / 24)} day${h < 48 ? "" : "s"} ago`;
+  }
+  // Buyback (buyback_detector.py): only the 4 hard proofs count - a whale buying on a DEX never does.
+  const BUYBACK_PROOF = {POOL_BURN: "🟢 Buyback &amp; Burn (DEX Pool → Burn)",
+    TEAM_BUY_BURNED: "🟢 Verified Team Buyback (Sent to Burn)",
+    TEAM_BUY_RETAINED: "🟢 Verified Team Buyback (Retained in Treasury)",
+    DEFILLAMA: "🟢 Protocol Revenue Buyback (DefiLlama)", DAO_VOTE: "🗳️ Passed DAO Buyback Vote"};
+  const TX_URL = {ethereum: "https://etherscan.io/tx/", bsc: "https://bscscan.com/tx/", base: "https://basescan.org/tx/",
+    arbitrum: "https://arbiscan.io/tx/", polygon: "https://polygonscan.com/tx/", avalanche: "https://snowtrace.io/tx/",
+    optimism: "https://optimistic.etherscan.io/tx/", solana: "https://solscan.io/tx/"};
+  function buybackRow(bb, chain) {
+    const lbl = small => `<span class="lbl">Buyback<small>${small}</small></span>`;
+    if (!bb) return `<li class="soon">${lbl("EVM / Solana coins · not checked yet")}<span class="val">—</span></li>`;
+    const rows = pairs => `<li class="burnli">${lbl("verified buyback check")}<dl class="burnbox">${
+      pairs.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl></li>`;
+    if (!bb.has_verified_buyback)
+      return rows([["Does it Buyback?", "NO"], ["Buyback status", "❌ NO_BUYBACK — No verified protocol or team buyback detected."]]);
+    const out = [["Does it Buyback?", "YES (Verified Buyback)"],
+                 ["Buyback status &amp; proof", bb.proofs.map(p => BUYBACK_PROOF[p] || esc(p)).join("<br>")]];
+    if (bb.usd_24h != null || bb.usd_30d != null)
+      out.push([bb.proofs[0] === "DEFILLAMA" ? "Holders revenue (24h / 30d)" : "Buyback volume (24h / 30d)",
+                `${bb.usd_24h == null ? "—" : fmtMoney(bb.usd_24h)} (24h) · ${bb.usd_30d == null ? "—" : fmtMoney(bb.usd_30d)} (30d)`]);
+    if (bb.note) out.push(["1-hop / methodology note", esc(bb.note)]);
+    if (bb.last_at) {
+      const url = bb.last_tx && TX_URL[(chain || "").toLowerCase()];
+      out.push(["Last buyback", `${agoText(bb.last_at)} (${bb.last_at.slice(0, 10)})${url
+        ? ` · <a href="${url}${encodeURIComponent(bb.last_tx)}" target="_blank" rel="noopener" style="color:var(--accent)">view tx ↗</a>` : ""}`]);
+    }
+    return rows(out);
   }
   // Price Range (All-Time): CoinGecko ATH / ATL and where today's price sits
   // between them (0% = at the all-time low, 100% = at the all-time high).

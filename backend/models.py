@@ -79,6 +79,15 @@ class Coin(Base):
     burn_checked_at = Column(DateTime)      # None = never checked
     burn_events = Column(Integer)           # burns seen in the scan window (display only)
     burn_events_capped = Column(Boolean)    # True = the window was full (EVM 10 / Solana 100) -> "N+"
+    # Verified buyback (buyback_detector.py) - nullable, display only; NULL = not checked.
+    buyback_verified = Column(Boolean)
+    buyback_proofs = Column(String)         # POOL_BURN / TEAM_BUY_BURNED / TEAM_BUY_RETAINED / DEFILLAMA / DAO_VOTE, comma list
+    buyback_note = Column(Text)             # DefiLlama methodology / 1-hop outcome / DAO title
+    buyback_usd_24h = Column(Float)
+    buyback_usd_30d = Column(Float)
+    buyback_last_tx = Column(String)
+    buyback_last_at = Column(DateTime)
+    buyback_checked_at = Column(DateTime)
 
     # X / Twitter handle from CoinGecko (socials.py) - display only.
     twitter_handle = Column(String)         # None = no handle on CoinGecko
