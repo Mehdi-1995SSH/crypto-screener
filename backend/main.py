@@ -279,6 +279,10 @@ def get_coins():
         xb = badges(session, [r["id"] for r in rows])
         for r in rows:
             r["exchange_badges"] = xb.get(r["id"], [])
+        # Pre-listing / MM radar badge: only coins with an alert get the key.
+        from pre_listing_radar import rules_by_coin
+        for cid, rules in rules_by_coin(session, [r["id"] for r in rows]).items():
+            next(r for r in rows if r["id"] == cid)["pre_listing"] = rules
         # Volume spike of the last 7 days (🚨 / ⚠️ / 📈 badge), stored.
         from volume_anomaly import recent_spikes
         vs = recent_spikes(session, [r["id"] for r in rows])
@@ -584,6 +588,7 @@ def get_coin(contract: str):
         from security_check import SECURITY_COLUMNS
         from entry_zone import load_bars
         from tx_bars import GT_NETWORKS
+        from pre_listing_radar import for_coin as prelisting_for
         from concurrent.futures import ThreadPoolExecutor
 
         def own_session(fn, *args):
@@ -714,6 +719,8 @@ def get_coin(contract: str):
                             "gt_network": GT_NETWORKS.get((coin.chain or "").lower()), "contract": coin.contract},
             "unlocks": get_unlocks(session, coin),   # DropsTab, stored (no API call)
             "futures": futures_data(session, coin.id),  # Coinalyze, stored (no API call)
+            # Pre-listing / MM radar alerts, stored; the key exists only when there is one
+            **({"pre_listing": pl} if (pl := prelisting_for(session, coin)) else {}),
             "listings": get_listings(session, coin),    # exchange listings, stored (no API call)
             "volume_spike": get_recent_spike(session, coin.id),  # last 7 days, stored (no API call)
             "performance": _live_performance(coin, safe_compute(session, [coin]).get(coin.id)),  # since it entered Active

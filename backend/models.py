@@ -925,3 +925,62 @@ class DaoScanState(Base):
 
     id = Column(Integer, primary_key=True)
     last_scan_at = Column(DateTime, nullable=False)
+
+
+class WatchedEntity(Base):
+    """
+    Pre-listing radar (pre_listing_radar.py): a wallet of one of the 10 CEXs
+    or 15 market makers we watch. EVM addresses are stored once (lowercase,
+    chain 'evm' - CEX / MM wallets are reused across EVM chains); Solana
+    exact case. PERMANENT: never pruned. Seeded by seed_watched_entities.py;
+    the radar adds 1_HOP_DETECTION wallets.
+    """
+    __tablename__ = "watched_entities"
+
+    address = Column(String, primary_key=True)
+    chain = Column(String, nullable=False)                     # "evm" | "solana"
+    entity_name = Column(String, nullable=False)               # "Wintermute", "Binance", ...
+    entity_type = Column(String, nullable=False, index=True)   # "MARKET_MAKER" | "CEX"
+    is_root_wallet = Column(Boolean, nullable=False, default=True)
+    discovered_via = Column(String, nullable=False)            # "OPEN_LABELS" | "1_HOP_DETECTION"
+    source_label = Column(String)                              # dataset name tag / how it was found
+    created_at = Column(DateTime, default=utcnow)
+
+
+class PreListingAlert(Base):
+    """
+    Pre-listing radar: one CEX / market-maker movement of an active coin.
+    One row per (coin, rule, entity, cex); rows older than 30 days are
+    deleted every daily run. Display + Telegram only - no rule reads it.
+    """
+    __tablename__ = "pre_listing_alerts"
+    __table_args__ = (UniqueConstraint("coin_id", "rule", "entity_name", "cex_name", name="uq_pre_listing"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    coin_id = Column(Integer, nullable=False, index=True)
+    rule = Column(String, nullable=False)                      # CEX_DEPOSIT | MM_ONBOARDING | MM_TO_CEX
+    entity_name = Column(String, nullable=False)               # the MM (MM rules) or the CEX (CEX_DEPOSIT)
+    cex_name = Column(String, nullable=False, default="")      # the CEX for CEX_DEPOSIT / MM_TO_CEX, else ""
+    via = Column(String)                                       # direct | deposit_sweep | top_holder | 1_hop_gas | 1_hop_sweep
+    from_address = Column(String)
+    to_address = Column(String)
+    amount = Column(Float)                                     # tokens
+    pct_supply = Column(Float)
+    tx_hash = Column(String)
+    tx_time = Column(DateTime)                                 # UTC (estimated from the block on BSC / Base)
+    chain = Column(String)
+    created_at = Column(DateTime, nullable=False, default=utcnow, index=True)
+    notified_at = Column(DateTime)                             # Telegram sent
+
+
+class TopHolderSnapshot(Base):
+    """Pre-listing radar: an active coin's top holders on a day (rule 3's "new
+    in the top holders"). Rows older than 30 days are deleted every run."""
+    __tablename__ = "top_holder_snapshots"
+    __table_args__ = (UniqueConstraint("coin_id", "day", name="uq_top_holder_day"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    coin_id = Column(Integer, nullable=False, index=True)
+    day = Column(Date, nullable=False)
+    holders = Column(Text, nullable=False)                     # JSON [address, ...] in rank order
+
