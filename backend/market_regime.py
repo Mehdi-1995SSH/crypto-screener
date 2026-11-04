@@ -2,47 +2,51 @@
 market_regime.py
 ----------------
 MARKET REGIME (website top status bar) - OBSERVATION ONLY: no entry filter,
-score, drop or stop-loss rule reads it. BTC 24h / 5d / 30d change from ONE
-CoinGecko call a day (/coins/bitcoin/market_chart, 31 days, hourly):
-  🔴 bearish   30d <= -10% or 5d <= -8%
-  🟡 pullback  otherwise, 5d < -2% or 30d < 0%
-  🟢 bullish   otherwise                (24h is shown, not used)
-One row in market_regime per day; /api/coins serves the latest (0 calls per page view).
+score, drop or stop-loss rule reads it. BTC, ETH, SOL price + 24h / 7d / 30d
+change from ONE CoinGecko call a day (/coins/markets). The overall state uses
+the market = the average of the three per window (>= 0% = up):
+  market 30d / 7d   up / up 🟢 bullish     up / down 🟡 pullback
+                    down / up 🔵 recovery  down / down 🔴 bearish
+(24h is shown, not used.) One row in market_regime per day; /api/coins serves
+the latest (0 calls per page view).
 """
 import json
 from datetime import date
 
 import requests
 
-CG_CHART_URL = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+CG_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
+MAJORS = [("bitcoin", "BTC"), ("ethereum", "ETH"), ("solana", "SOL")]
 REFRESH_DAYS = 1
-STATES = {"bullish": ("🟢", "Positive / stable", "إيجابي / مستقر"),
-          "pullback": ("🟡", "Healthy pullback", "تصحيح صحي (فرصة انتقاء)"),
-          "bearish": ("🔴", "Downtrend, selling pressure", "هبوط وضغط بيعي (حذر)")}
+STATES = {(True, True): ("bullish", "🟢", "Bullish / positive", "صاعد / إيجابي"),
+          (True, False): ("pullback", "🟡", "Healthy pullback", "تصحيح صحي (فرصة انتقاء)"),
+          (False, True): ("recovery", "🔵", "Recovery / bounce", "ارتداد وتعافي"),
+          (False, False): ("bearish", "🔴", "Bearish, selling pressure", "هبوط وضغط بيعي (حذر)")}
 
 
-def classify(d5, d30):
-    if d30 <= -10 or d5 <= -8:
-        return "bearish"
-    return "pullback" if d5 < -2 or d30 < 0 else "bullish"
+def _avg(vals):
+    vals = [v for v in vals if v is not None]
+    return round(sum(vals) / len(vals), 2) if vals else None
 
 
-def from_chart(prices):
-    """The bar's dict from market_chart prices [[ms, usd], ...] (pure): the change
-    vs the newest point at least 24 h / 5 d / 30 d before the latest one."""
-    pts = sorted(p for p in prices or [] if p and p[1])
-    if not pts:
-        return {"btc": None, "state": None}
-    t, now = pts[-1]
+def _pct(v):
+    return None if v is None else round(v, 2)
 
-    def chg(sec):
-        past = [p for p in pts if p[0] <= t - sec * 1000]
-        return round((now / past[-1][1] - 1) * 100, 2) if past else None
-    btc = {"price": now, "d1": chg(86400), "d5": chg(5 * 86400), "d30": chg(30 * 86400)}
-    out = {"btc": btc, "state": None}
-    if btc["d5"] is not None and btc["d30"] is not None:
-        key = classify(btc["d5"], btc["d30"])
-        emoji, label, label_ar = STATES[key]
+
+def from_markets(rows):
+    """The bar's dict from a /coins/markets response (pure)."""
+    by_id = {r.get("id"): r for r in rows or []}
+    coins = []
+    for cg_id, sym in MAJORS:
+        r = by_id.get(cg_id) or {}
+        coins.append({"symbol": sym, "price": r.get("current_price"),
+                      "d1": _pct(r.get("price_change_percentage_24h_in_currency")),
+                      "d7": _pct(r.get("price_change_percentage_7d_in_currency")),
+                      "d30": _pct(r.get("price_change_percentage_30d_in_currency"))})
+    m30, m7 = _avg(c["d30"] for c in coins), _avg(c["d7"] for c in coins)
+    out = {"coins": coins, "market": {"d30": m30, "d7": m7}, "state": None}
+    if m30 is not None and m7 is not None:
+        key, emoji, label, label_ar = STATES[(m30 >= 0, m7 >= 0)]
         out.update(state=key, emoji=emoji, label=label, label_ar=label_ar)
     return out
 
@@ -59,12 +63,13 @@ def run_market_regime(today=None, force=False):
         row = session.query(MarketRegime).order_by(MarketRegime.day.desc()).first()
         if row and not force and (today - row.day).days < REFRESH_DAYS:
             return json.loads(row.data)                     # still fresh - no call
-        r = requests.get(CG_CHART_URL, params={"vs_currency": "usd", "days": 31},
+        r = requests.get(CG_MARKETS_URL, params={"vs_currency": "usd", "ids": ",".join(i for i, _ in MAJORS),
+                                                 "price_change_percentage": "24h,7d,30d"},
                          headers={"x-cg-demo-api-key": CG_KEY} if CG_KEY else {}, timeout=30)
         r.raise_for_status()
-        data = {**from_chart(r.json().get("prices")), "as_of": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
+        data = {**from_markets(r.json()), "as_of": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
         if not data["state"]:
-            raise ValueError("CoinGecko returned no BTC 5d / 30d history")   # keep the last good row
+            raise ValueError("CoinGecko returned no 30d / 7d changes")   # keep the last good row
         new = session.query(MarketRegime).filter_by(day=today).first() or MarketRegime(day=today)
         new.data, new.computed_at = json.dumps(data), utcnow()
         session.add(new)
