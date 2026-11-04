@@ -252,6 +252,8 @@ def run_check(contract):
     f_lst = pool.submit(listings_live, symbol, price, contract)
     # Burned supply: stored for a coin we track, else live (Etherscan / public RPC).
     f_burn = pool.submit(_check_burn, contract, chain, pairs, md.get("max_supply"))
+    # Verified buyback: stored for a coin we track, else live (needs GoPlus / RugCheck creator + owner).
+    f_bb = pool.submit(lambda: _check_buyback(contract, chain, pairs, f_sec.result(), price))
     pool.shutdown(wait=False)
 
     steps = []
@@ -457,7 +459,7 @@ def run_check(contract):
         # Entry Zone (Codex daily bars; no holders history for an unlisted coin).
         "entry_zone": ez,
         "score": check_score(md, mcap, ez, contract, chain, liq, daily, _num(dex_rec.get("liquidity_usd"))),
-        "supply": {**check_supply(md), "burned": f_burn.result()},
+        "supply": {**check_supply(md), "burned": f_burn.result(), "buyback": f_bb.result()},
         # Futures Data (Coinalyze OI / funding / long-short; nothing stored).
         "futures": f_fut.result(),
         # Exchange Listings on the 12 monitored exchanges (stored data).
@@ -713,6 +715,27 @@ def _check_burn(contract, chain, pairs, max_supply=None):
         session.close()
 
 
+def _check_buyback(contract, chain, pairs, sec, price):
+    """The daily run's stored buyback result for a coin we track, else a live check. Never raises."""
+    import buyback_detector
+    from sqlalchemy import func
+    from database import SessionLocal
+    from models import Coin
+    session = SessionLocal()
+    try:
+        coin = (session.query(Coin).filter(func.lower(Coin.contract) == (contract or "").lower(),
+                                           Coin.buyback_checked_at.isnot(None)).first())
+        if coin:
+            return buyback_detector.for_coin(coin)
+        return buyback_detector.check(contract, chain, pairs, ((sec or {}).get("creator_address"),
+                                                               (sec or {}).get("owner_address")), price)
+    except Exception:
+        session.rollback()
+        return None
+    finally:
+        session.close()
+
+
 def check_supply(md):
     """Supply section data (same shape as the detail page's) from the
     CoinGecko response already fetched. No API calls."""
@@ -722,7 +745,7 @@ def check_supply(md):
         "circulating_pct": round(circ / total * 100, 2) if circ and total else None,
         "max": mx,
         "uncapped": mx is None and (total is not None or circ is not None),
-        "burned": None, "upcoming_unlock": None, "updated": None,
+        "burned": None, "buyback": None, "upcoming_unlock": None, "updated": None,
     }
 
 

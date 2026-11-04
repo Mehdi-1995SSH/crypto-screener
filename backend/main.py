@@ -585,6 +585,7 @@ def get_coin(contract: str):
         from volume_anomaly import get_recent_spike
         from performance import safe_compute
         from burn_detector import for_coin as burn_for_coin
+        from buyback_detector import for_coin as buyback_for_coin
         from security_check import SECURITY_COLUMNS
         from entry_zone import load_bars
         from tx_bars import GT_NETWORKS
@@ -735,6 +736,7 @@ def get_coin(contract: str):
                 "uncapped": coin.max_supply is None and coin.supply_uncapped is not False
                             and (coin.total_supply is not None or coin.circulating_supply is not None),
                 "burned": burn_for_coin(coin),   # burn_detector.py, stored by the daily run
+                "buyback": buyback_for_coin(coin),   # buyback_detector.py, stored by the daily run
                 "upcoming_unlock": None,    # placeholder - needs a paid unlocks API
                 "updated": _iso(coin.supply_updated_at),
             },

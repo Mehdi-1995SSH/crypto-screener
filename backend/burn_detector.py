@@ -41,6 +41,7 @@ import statistics
 import threading
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import requests
 from dotenv import load_dotenv
@@ -123,17 +124,22 @@ async def _es(cid, **params):
     return await asyncio.to_thread(_es_get, cid, **params)
 
 
-async def _from_etherscan(contract, cid):
-    bals = {w: int(await _es(cid, module="account", action="tokenbalance", contractaddress=contract,
-                             address=w, tag="latest") or 0) for w in BURN_WALLETS}
+async def _from_etherscan(contract, cid, pre=None):
+    """pre = this token's multicall.read_tokens() row: balances / supply / decimals already read."""
+    pre = pre if pre and pre.get("supply") is not None else None
+    bals = pre["balances"] if pre else {w: int(await _es(cid, module="account", action="tokenbalance",
+                                                          contractaddress=contract, address=w, tag="latest") or 0)
+                                        for w in BURN_WALLETS}
     top = max(BURN_WALLETS, key=lambda w: bals[w]) if any(bals.values()) else ZERO
     txs = await _es(cid, module="account", action="tokentx", contractaddress=contract, address=top,
                     page=1, offset=25, sort="desc") or []
     incoming = [t for t in txs if t["to"].lower() == top.lower()][:10]          # from 0x0 = mint, never a burn
     if not any(bals.values()) and not incoming:
         return bals, None, None, []
-    supply = int(await _es(cid, module="stats", action="tokensupply", contractaddress=contract) or 0)
-    if txs:
+    supply = pre["supply"] if pre else int(await _es(cid, module="stats", action="tokensupply", contractaddress=contract) or 0)
+    if pre and pre.get("decimals") is not None:
+        decimals = pre["decimals"]
+    elif txs:
         decimals = int(txs[0]["tokenDecimal"])
     else:
         r = await _es(cid, module="proxy", action="eth_call", to=contract, data="0x313ce567", tag="latest")
@@ -249,7 +255,7 @@ def _summarize(contract, cid, source, bals, supply, decimals, transfers, pair_ad
 
 
 async def detect_token_burn(contract_address, chain_id, api_key=None, token_decimals=18,
-                            pair_address=None, pair_created_at=None):
+                            pair_address=None, pair_created_at=None, pre=None):
     """Burn data for one token (see module docstring). api_key defaults to
     ETHERSCAN_API_KEY; token_decimals is only a fallback (read on-chain)."""
     if api_key:
@@ -260,7 +266,7 @@ async def detect_token_burn(contract_address, chain_id, api_key=None, token_deci
              "source": None, "error": None}
     try:
         if chain_id in ES_FREE:
-            source, (bals, supply, dec, tr) = "etherscan", await _from_etherscan(contract_address, chain_id)
+            source, (bals, supply, dec, tr) = "etherscan", await _from_etherscan(contract_address, chain_id, pre)
         elif chain_id in RPCS:
             source, (bals, supply, dec, tr) = "rpc", await asyncio.to_thread(_from_rpc_sync, contract_address, chain_id)
         else:
@@ -383,11 +389,24 @@ def supported(chain):
     return chain_id(chain) is not None or (chain or "").lower() == "solana"
 
 
-async def detect(contract, chain, pair_address=None, pair_created_at=None, max_supply=None):
-    """EVM or Solana, by chain."""
+async def detect(contract, chain, pair_address=None, pair_created_at=None, max_supply=None, pre=None):
+    """EVM or Solana, by chain. pre = multicall row (Etherscan chains)."""
     if (chain or "").lower() == "solana":
         return await detect_solana_burn(contract, max_supply, pair_created_at=pair_created_at)
-    return await detect_token_burn(contract, chain_id(chain), pair_address=pair_address, pair_created_at=pair_created_at)
+    return await detect_token_burn(contract, chain_id(chain), pair_address=pair_address,
+                                   pair_created_at=pair_created_at, pre=pre)
+
+
+def prefetch(coins):
+    """Multicall3 reads for the Etherscan-chain coins ({contract_lower: row}); a failed chain is left out."""
+    import multicall
+    out = {}
+    for cid in {chain_id(c.chain) for c in coins} & ES_FREE:
+        try:
+            out.update(multicall.read_tokens(cid, [c.contract for c in coins if chain_id(c.chain) == cid], BURN_WALLETS))
+        except Exception:
+            pass                                    # per-token Etherscan calls instead
+    return out
 
 
 # ---------------------------------------------------------------- storage / display
@@ -440,7 +459,8 @@ def check(contract, chain, pairs, max_supply=None):
     if not supported(chain):
         return None
     pair, created = main_pair(pairs, chain)
-    r = asyncio.run(detect(contract, chain, pair, created, max_supply))
+    pre = prefetch([SimpleNamespace(chain=chain, contract=contract)]).get(contract.lower())
+    r = asyncio.run(detect(contract, chain, pair, created, max_supply, pre))
     if r["error"]:
         return None
     unknown = r["total_burned_amount"] == "Unknown"
@@ -469,10 +489,12 @@ def run_burn_update(session=None, statuses=("active",), concurrency=3):
         for p in pairs:
             by_token.setdefault(((p.get("baseToken") or {}).get("address") or "").lower(), []).append(p)
 
+        pre = prefetch(coins)
+
         async def one(sem, c):
             async with sem:
                 pair, created = main_pair(by_token.get(c.contract.lower()), c.chain)
-                return c, await detect(c.contract, c.chain, pair, created, c.max_supply)
+                return c, await detect(c.contract, c.chain, pair, created, c.max_supply, pre.get(c.contract.lower()))
 
         async def all_coins():
             sem = asyncio.Semaphore(concurrency)

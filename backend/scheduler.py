@@ -228,6 +228,15 @@ def run_pipeline(raise_on_error=False):
             log.exception("Burned supply update failed - continuing.")
             report.step_errors.append("Burned supply")
 
+        # Verified buybacks (4 strict proofs). Display only - its own try.
+        log.info("Checking verified buybacks (DefiLlama / on-chain / Snapshot)...")
+        try:
+            from buyback_detector import run_buyback_update
+            run_buyback_update()
+        except Exception:
+            log.exception("Buyback check failed - continuing.")
+            report.step_errors.append("Buyback check")
+
         # Market Regime banner (BTC / ETH / SOL 30d + 7d): one CoinGecko call
         # every 7 days, skipped in between. Observation only - no rule reads it.
         try:
