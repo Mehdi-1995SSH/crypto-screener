@@ -208,6 +208,16 @@ def run_pipeline(raise_on_error=False):
             log.exception("Exchange listings update failed - continuing.")
             report.step_errors.append("Exchange listings")
 
+        # Pre-listing / market-maker radar (pre_listing_radar.py): active coins' transfers to / from
+        # known CEX and market-maker wallets. Display + Telegram only - no rule reads it.
+        log.info("Pre-listing radar (Etherscan V2 / public RPC / Helius)...")
+        try:
+            from pre_listing_radar import run_pre_listing_radar
+            run_pre_listing_radar()
+        except Exception:
+            log.exception("Pre-listing radar failed - continuing.")
+            report.step_errors.append("Pre-listing radar")
+
         # Burned supply for active EVM + Solana coins (Etherscan V2 / public RPC / Helius).
         # Display only - its own try so a failure never stops the run.
         log.info("Updating burned supply (Etherscan / public RPC / Helius)...")

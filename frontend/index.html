@@ -204,6 +204,13 @@
   .deccard .m { color: var(--muted); font-size: 13px; }
   .deccard .dectitle { font-weight: 600; }
   .deccard [dir="rtl"] { text-align: right; }
+  .plcard { border-color: rgba(248,81,73,0.55); padding: 14px 16px; margin-bottom: 14px; display: grid; gap: 12px; overflow-wrap: anywhere; }
+  .plcard h3 { margin: 0; color: var(--low); }
+  .plcard .pl { display: grid; gap: 4px; }
+  .plcard .pl [dir="rtl"] { text-align: right; }
+  .plcard .m { color: var(--muted); font-size: 13px; }
+  .plcard a { color: var(--accent); text-decoration: none; }
+  .plbadge { margin-left: 4px; cursor: help; }
   .deccard .decact { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 14px; }
   .deccard .decact a { color: var(--accent); text-decoration: none; }
   .deccard .decact a:hover { text-decoration: underline; }
@@ -1098,7 +1105,7 @@
       <tr tabindex="0" data-contract="${esc(c.contract)}" title="Open ${esc(c.name)}">
         <td class="rank">${c.rank}</td>
         <td>
-          <div class="name">${favStar(c.contract, c.name)}${esc(c.name)}${volBadge(c.volume_spike)}${coinBadges(c)} ${secBadge(c)}${exchangeBadges(c.exchange_badges)}${!c._fav && canBuy() ? `<button type="button" class="btn primary chbuy" data-buy="${esc(c.contract)}" title="Buy ${esc(c.name)} in your challenge">💰 Buy</button>` : ""}</div>
+          <div class="name">${favStar(c.contract, c.name)}${esc(c.name)}${volBadge(c.volume_spike)}${coinBadges(c)} ${secBadge(c)}${exchangeBadges(c.exchange_badges)}${plBadge(c.pre_listing)}${!c._fav && canBuy() ? `<button type="button" class="btn primary chbuy" data-buy="${esc(c.contract)}" title="Buy ${esc(c.name)} in your challenge">💰 Buy</button>` : ""}</div>
           <span class="chain">${esc(c.chain)}</span>
           ${secInfo(c)}
         </td>
@@ -1553,6 +1560,25 @@
 
   // Exchange listing badges: 🆕 Binance = newly listed (last 7 days), 📅 Upbit =
   // scheduled (exchange announcement). Click -> the coin's Exchange Listings card.
+  // Pre-listing / MM radar (pre_listing_radar.py): a badge and a detail card ONLY when
+  // the coin has an alert - nothing at all otherwise.
+  const PL_RULES = {CEX_DEPOSIT: "🚨 Sent to a CEX where it isn't listed yet", MM_TO_CEX: "🐋 Market maker → CEX",
+                    MM_ONBOARDING: "🐋 Market maker received tokens"};
+  function plBadge(rules) {
+    if (!rules || !rules.length) return "";
+    const icon = rules.includes("CEX_DEPOSIT") || rules.includes("MM_TO_CEX") ? "🚨" : "🐋";
+    return `<span class="plbadge" title="${esc("Pre-listing / MM activity: " + rules.map(r => PL_RULES[r] || r).join(" · "))}">${icon}</span>`;
+  }
+  function preListingCard(list) {
+    if (!list || !list.length) return "";
+    return `<div class="card plcard"><h3>🚨 Pre-Listing / MM Activity</h3>
+      <div class="m" dir="rtl" lang="ar">نشاط ما قبل الإدراج / صنّاع السوق</div>
+      ${list.map(a => `<div class="pl">
+        <div>${esc(a.en)}</div>
+        <div dir="rtl" lang="ar">${esc(a.ar)}</div>
+        <div class="m">${esc(longDate(a.time.slice(0, 10)))}${a.pct_supply != null ? ` · ${a.pct_supply < 0.01 ? "<0.01" : a.pct_supply.toFixed(2)}% of supply` : ""}${a.tx_url ? ` · <a href="${esc(a.tx_url)}" target="_blank" rel="noopener">transaction ↗</a>` : ""}</div>
+      </div>`).join("")}</div>`;
+  }
   function exchangeBadges(list) {
     if (!list || !list.length) return "";
     const day = d => new Date(d).toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric", timeZone: "UTC"});
@@ -1787,6 +1813,7 @@
         <div class="fact wide"><div class="k">Contract</div>
           <div class="v mono" data-addr="${esc(c.contract)}" title="Click to copy">${esc(c.contract)}</div></div>
       </div>
+      ${preListingCard(c.pre_listing)}
       ${allScoreCard(c.score_history)}
       ${futuresCard(c.futures)}
       ${priceChartCard(c.price_chart, "coin")}
