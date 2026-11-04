@@ -59,4 +59,16 @@ r = sol([burn(1, 500)] + [burn(d, 0.1) for d in range(2, 9)], 8)                
 assert (r["burn_status"], r["burn_frequency"]) == ("STATIC_PRE_BURN", "ONE_TIME")
 assert sol([{**burn(1, 500), "buyback": True}, burn(3, 500)], 2)["burn_status"] == "BUYBACK_AND_BURN"
 assert B.supported("solana") and not B.supported("sui")
+
+# ---- burn event counts (display): EVM window holds 10 transfers, Solana one page of 100 txs
+assert (s({}, 9 * 10**23, tr(1, 8, 15, v=10**23))["burn_events"], s({}, 9 * 10**23, tr(1, 8, 15, v=10**23))["burn_events_capped"]) == (3, False)
+r = s({}, 9 * 10**23, tr(*range(10), v=10**22))
+assert (r["burn_events"], r["burn_events_capped"]) == (10, True)
+assert (s({}, 10**24, [])["burn_events"], sol([burn(1, 50)], 1)["burn_events"]) == (0, 0)
+r = sol([burn(d / 10, 50) for d in range(100)], 100)
+assert (r["burn_events"], r["burn_events_capped"]) == (100, True)
+r = sol([burn(1, 500)] + [burn(d, 0.1) for d in range(2, 9)], 8)                        # micro-burns not counted
+assert (r["burn_events"], r["burn_events_capped"]) == (1, False)
+d = B.display(5.0, 1.0, "ACTIVE_BURN", "DAILY", None, None, events=12, events_capped=True)
+assert (d["events"], d["events_capped"]) == (12, True) and "address" not in str(d)
 print("burn self-check: ok")

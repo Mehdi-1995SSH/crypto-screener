@@ -233,7 +233,8 @@ def _summarize(contract, cid, source, bals, supply, decimals, transfers, pair_ad
     if not burned or (denom and burned / denom * 100 < DUST_PCT):     # dust sent to a burn wallet isn't a burn
         return {**base, "is_burnable": False, "burn_status": "NO_BURN", "burn_frequency": "NONE",
                 "total_burned_amount": 0.0, "burned_percentage": 0.0, "last_burn_date": None,
-                "days_since_last_burn": None, "burn_addresses_with_balance": []}
+                "days_since_last_burn": None, "burn_addresses_with_balance": [],
+                "burn_events": 0, "burn_events_capped": False}
     status, freq = classify(transfers, burned, contract, pair_address, pair_created_at, now)
     last = max((t["ts"] for t in transfers), default=None)
     scale = 10 ** decimals
@@ -242,7 +243,9 @@ def _summarize(contract, cid, source, bals, supply, decimals, transfers, pair_ad
             "burned_percentage": round(min(100.0, max(0.0, burned / denom * 100)), 4) if denom else None,
             "last_burn_date": datetime.fromtimestamp(last, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if last else None,
             "days_since_last_burn": int((now - last) // 86400) if last else None,
-            "burn_addresses_with_balance": [{"address": w, "amount": b / scale} for w, b in bals.items() if b]}
+            "burn_addresses_with_balance": [{"address": w, "amount": b / scale} for w, b in bals.items() if b],
+            # both EVM paths read at most the last 10 burn transfers
+            "burn_events": len(transfers), "burn_events_capped": len(transfers) >= 10}
 
 
 async def detect_token_burn(contract_address, chain_id, api_key=None, token_decimals=18,
@@ -323,7 +326,7 @@ def _solana_summary(mint, current, burns, raw_count, max_supply, mint_off, freez
             "freeze_authority_disabled": freeze_off, "is_safe_from_manipulation": mint_off and freeze_off,
             "last_burn_date": None, "source": "helius"}
     none = {**base, "is_burnable": False, "burn_status": "NO_BURN", "burn_frequency": "NONE",
-            "total_burned_amount": 0.0, "burned_percentage": 0.0}
+            "total_burned_amount": 0.0, "burned_percentage": 0.0, "burn_events": 0, "burn_events_capped": False}
     truncated = raw_count >= 100                       # one page only: older burns may be missing
     # max - current is burned only when nothing more can be minted (else it's unminted supply)
     gap = max_supply - current if max_supply and mint_off and max_supply > current else 0
@@ -345,7 +348,8 @@ def _solana_summary(mint, current, burns, raw_count, max_supply, mint_off, freez
     last = max((b["ts"] for b in big), default=None)
     return {**base, "is_burnable": True, "burn_status": status, "burn_frequency": freq,
             "total_burned_amount": total, "burned_percentage": pct if pct == "Unknown" else round(min(100.0, pct), 4),
-            "last_burn_date": datetime.fromtimestamp(last, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if last else None}
+            "last_burn_date": datetime.fromtimestamp(last, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if last else None,
+            "burn_events": len(big), "burn_events_capped": truncated}
 
 
 def _solana_sync(mint, max_supply, pair_created_at):
@@ -407,10 +411,11 @@ def store(coin, r, now):
     coin.last_burn_at = (datetime.strptime(r["last_burn_date"], "%Y-%m-%dT%H:%M:%SZ")
                          if r["last_burn_date"] else None)
     coin.burn_checked_at = now
+    coin.burn_events, coin.burn_events_capped = r.get("burn_events"), r.get("burn_events_capped")
     return True
 
 
-def display(amount, pct, status, frequency, last_burn_at, checked_at, source=None):
+def display(amount, pct, status, frequency, last_burn_at, checked_at, source=None, events=None, events_capped=None):
     """The Supply section's `burned` value (None = not checked / unsupported
     chain). pct None with a burn status = only a recent sample is known."""
     if status is None:
@@ -422,12 +427,12 @@ def display(amount, pct, status, frequency, last_burn_at, checked_at, source=Non
             "last_burn_at": last.strftime("%Y-%m-%dT%H:%M:%SZ") if last else None,
             "days_since_last_burn": (now - last).days if last else None,
             "checked_at": checked_at.strftime("%Y-%m-%dT%H:%M:%SZ") if isinstance(checked_at, datetime) else checked_at,
-            "source": source}
+            "source": source, "events": events, "events_capped": events_capped}
 
 
 def for_coin(coin):
     return display(coin.burned_amount, coin.burned_pct, coin.burn_status, coin.burn_frequency,
-                   coin.last_burn_at, coin.burn_checked_at)
+                   coin.last_burn_at, coin.burn_checked_at, events=coin.burn_events, events_capped=coin.burn_events_capped)
 
 
 def check(contract, chain, pairs, max_supply=None):
@@ -441,7 +446,8 @@ def check(contract, chain, pairs, max_supply=None):
     unknown = r["total_burned_amount"] == "Unknown"
     return display(r["recent_sampled_burned_amount"] if unknown else r["total_burned_amount"],
                    None if unknown else r["burned_percentage"], r["burn_status"], r["burn_frequency"],
-                   r["last_burn_date"], datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), r["source"])
+                   r["last_burn_date"], datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), r["source"],
+                   r.get("burn_events"), r.get("burn_events_capped"))
 
 
 def run_burn_update(session=None, statuses=("active",), concurrency=3):

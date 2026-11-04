@@ -216,6 +216,12 @@ _NEW_COLUMNS += [
     ("dao_catalyst_alerts", "title_ar", "TEXT", None),
 ]
 
+# Burn breakdown (burn_detector.py): burn events seen in the scan window - nullable, display only.
+_NEW_COLUMNS += [
+    ("coins", "burn_events", "INTEGER", None),
+    ("coins", "burn_events_capped", "BOOLEAN", None),
+]
+
 # Favorites portfolio (added after the favorites tables were created).
 _NEW_COLUMNS += [
     ("favorite_profiles", "tracking_since", "TIMESTAMP",
