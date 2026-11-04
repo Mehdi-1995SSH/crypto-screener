@@ -24,7 +24,7 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     padding: 24px 16px 60px;
   }
-  .wrap { max-width: 1100px; margin: 0 auto; }
+  .wrap { max-width: 1600px; margin: 0 auto; }
   header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
   h1 { font-size: 24px; margin: 0; letter-spacing: -0.5px; }
   h1 .dot { color: var(--good); }
@@ -593,7 +593,9 @@
   .topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
     background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px;
     margin: 8px 0 18px; font-size: 13px; color: var(--muted); }
-  .tb-regime { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; color: var(--text); }
+  .tb-regime { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; color: var(--text); }
+  .tb-coin { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .tb-coin > b:first-child { color: var(--text); display: inline-block; min-width: 32px; }
   .tb-regime .up { color: var(--good); } .tb-regime .down { color: var(--low); }
   .tb-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .ib { all: unset; cursor: help; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-inline-start: 6px;
@@ -1261,14 +1263,17 @@
       </tbody></table></div></div>`;
   }
 
-  // Top bar: BTC market regime (market_regime.py, daily) - observation only.
-  const REGIME_TIP = "حالة السوق من سعر BTC: 🔴 إذا هبط 10% أو أكثر خلال 30 يوماً أو 8% خلال 5 أيام؛ 🟡 إذا هبط أكثر من 2% خلال 5 أيام أو كان سالباً خلال 30 يوماً؛ وإلا 🟢. للمراقبة فقط — لا تؤثر على الفلتر أو السكور. تُحدَّث مرة يومياً.";
+  // Top bar: overall market regime from BTC / ETH / SOL (market_regime.py, daily) - observation only.
+  const REGIME_TIP = "حالة السوق العامة من متوسط تغيّر BTC وETH وSOL: 🟢 إذا كان متوسط 30 يوماً و7 أيام موجباً؛ 🟡 إذا كان 30 يوماً موجباً و7 أيام سالباً (تصحيح صحي)؛ 🔵 إذا كان 30 يوماً سالباً و7 أيام موجباً (ارتداد)؛ 🔴 إذا كان الاثنان سالبين. تغيّر 24 ساعة للعرض فقط. للمراقبة فقط — لا تؤثر على الفلتر أو السكور. تُحدَّث مرة يومياً.";
   function renderRegime(r) {
-    const box = document.getElementById("tb-regime"), b = r && r.btc;
-    if (!b || !r.state) { box.hidden = true; return; }        // old-format row: status only
-    const pc = (k, v) => `<bdi dir="ltr">${k} ${v == null ? "—" : `<b class="${v >= 0 ? "up" : "down"}">${v >= 0 ? "+" : ""}${v.toFixed(1)}%</b>`}</bdi>`;
-    box.innerHTML = `<b>${r.emoji} حالة السوق: ${esc(r.label_ar)}</b>${tip(REGIME_TIP)}
-      <span><bdi dir="ltr">BTC ${fmtPrice(b.price)}</bdi> · ${pc("24h", b.d1)} · ${pc("5d", b.d5)} · ${pc("30d", b.d30)}</span>`;
+    const box = document.getElementById("tb-regime");
+    // current rows: coins [{symbol, price, d1, d7, d30}]; the previous BTC-only row: btc {price, d1, d5, d30}
+    const coins = r && (r.coins || (r.btc ? [{symbol: "BTC", ...r.btc}] : null));
+    if (!coins || !r.state) { box.hidden = true; return; }
+    const pc = (k, v) => `${k} ${v == null ? "—" : `<b class="${v >= 0 ? "up" : "down"}">${v >= 0 ? "+" : ""}${v.toFixed(1)}%</b>`}`;
+    box.innerHTML = `<div><b>${r.emoji} حالة السوق العامة: ${esc(r.label_ar)}</b>${tip(REGIME_TIP)}</div>`
+      + coins.map(c => `<div class="tb-coin" dir="ltr"><b>${esc(c.symbol)}</b> ${fmtPrice(c.price)} · ${pc("24h", c.d1)} · ${
+          "d7" in c ? pc("7d", c.d7) : pc("5d", c.d5)} · ${pc("30d", c.d30)}</div>`).join("");
     box.hidden = false;
   }
   function renderCoins(data) {
