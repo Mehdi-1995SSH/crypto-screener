@@ -62,8 +62,6 @@ def metrics(p, drop=None, dao=None):
     unl = (p.get("unlocks") or {}).get("next") or {}
     sec = p.get("security_info") or {}
     last7 = bars[-7:]
-    rk = p.get("ranks") or {}                     # detail: {"rank", "was", "change"}; Check a Coin: a bare rank
-    rank = lambda k: (rk.get(k) or {}).get("rank") if isinstance(rk.get(k), dict) else rk.get(k)
     ls = p.get("liquidity_sources") or {}
     perf = p.get("performance") or {}
     return {
@@ -87,9 +85,6 @@ def metrics(p, drop=None, dao=None):
         "honeypot": p.get("honeypot") or p.get("security"), "verified": sec.get("verified"),
         "mint_off": sec.get("mint_disabled"), "tax": max(sec.get("buy_tax") or 0, sec.get("sell_tax") or 0),
         "liq": liq, "liq_chg": liq_chg, "abandoned": ls.get("abandoned"),
-        "src_above": ls.get("n_above"), "src_count": ls.get("sources_count"), "src_min": ls.get("threshold"),
-        "cg_rank": rank("coingecko"), "cmc_rank": rank("cmc"),
-        "rank_chg": _avg([(rk.get(k) or {}).get("change") for k in ("coingecko", "cmc") if isinstance(rk.get(k), dict)]),
         "cex": len(lst.get("listed") or []), "cex_of": lst.get("monitored"),
         "delisted": len(lst.get("delisted") or []), "scheduled": len(lst.get("scheduled") or []),
         "funding": fh[-1].get("funding") if fh else None, "long_pct": fh[-1].get("long_pct") if fh else None,
@@ -106,6 +101,15 @@ def metrics(p, drop=None, dao=None):
 
 
 # ---------------------------------------------------------------- the two agents
+PUMP = 35      # % above the 14d low / since caught: past this, a price rise is only a risk (never a bull point)
+
+
+def _extended(m):
+    """Already pumped: > PUMP% above the 14d low or since caught, or in the upper half of the 60d range."""
+    return ((m["above_14"] or 0) > PUMP or (m["perf"] or 0) > PUMP
+            or (m["ez_pos"] is not None and m["ez_pos"] > 50))
+
+
 def _cases(m):
     bull, bear = [], []
     add = lambda side, w, text: side.append((w, text))
@@ -114,7 +118,7 @@ def _cases(m):
         if m["ez_pos"] <= 35: add(bull, 10, f"السعر داخل منطقة الدخول: موقعه {_p(m['ez_pos'], 0, False)} من نطاق 60 يوماً ({_p(m['ez_above_low'])} فوق القاع).")
         elif m["ez_pos"] >= 80: add(bear, 10, f"السعر ممتد في أعلى نطاق 60 يوماً (موقعه {_p(m['ez_pos'], 0, False)}، {_p(m['ez_above_low'])} فوق القاع).")
     if m["above_14"] is not None:
-        if m["above_14"] >= 40: add(bear, 6, f"صعد {_p(m['above_14'])} فوق قاع 14 يوماً — تمدد قصير المدى قد يتبعه جني أرباح.")
+        if m["above_14"] > PUMP: add(bear, 6, f"صعد {_p(m['above_14'])} فوق قاع 14 يوماً — تمدد قصير المدى قد يتبعه جني أرباح.")
         elif m["above_14"] <= 10: add(bull, 4, f"قريب من قاع 14 يوماً ({_p(m['above_14'])} فقط).")
     # the Entry Zone is the same 60-day range: only say it here when the zone point above didn't
     if m["above_60"] is not None and not (m["ez_pos"] is not None and (m["ez_pos"] <= 35 or m["ez_pos"] >= 80)):
@@ -151,22 +155,13 @@ def _cases(m):
     if m["verified"] is False: add(bear, 4, "كود العقد غير موثّق (لا يمكن مراجعته).")
     if m["holders"] is not None and m["holders"] < 1000: add(bear, 3, f"قاعدة حاملين صغيرة ({_n(m['holders'])} محفظة فقط).")
     if m["tax"] > 5: add(bear, 6, f"ضريبة تداول مرتفعة ({_p(m['tax'], 0, False)}).")
-    # 5 liquidity + sources, market-cap rank, CEX listings (orderbook depth: not in the app)
+    # 5 liquidity growth / thin / abandoned + CEX listings (orderbook depth: not in the app)
     if m["abandoned"]: add(bear, 10, "السيولة مهجورة: لا تحديث للسعر منذ أكثر من 48 ساعة (Birdeye).")
     if m["liq_chg"] is not None:
         if m["liq_chg"] >= 10: add(bull, 6, f"السيولة تنمو ({_p(m['liq_chg'])}، الآن {_usd(m['liq'])}).")
         elif m["liq_chg"] <= -20: add(bear, 8, f"السيولة تتراجع ({_p(m['liq_chg'])}، الآن {_usd(m['liq'])}).")
     if m["liq"] and m["mcap"] and m["liq"] / m["mcap"] * 100 < 0.5:
         add(bear, 4, f"سيولة DEX رقيقة مقابل القيمة السوقية ({_p(m['liq'] / m['mcap'] * 100, 2, False)}).")
-    if m["src_count"] and m["src_above"] is not None:
-        src = f"{_ltr(m['src_above'])} من {_ltr(m['src_count'])} مصادر فوق {_usd(m['src_min'] or 5000)}"
-        if m["src_above"] >= 3: add(bull, 3, f"السيولة مؤكدة من عدة مصادر ({src}).")
-        elif m["src_above"] < 2: add(bear, 6, f"السيولة غير مؤكدة ({src} فقط).")
-    if m["rank_chg"] is not None and abs(m["rank_chg"]) >= 20:
-        where = " · ".join(k + " " + _ltr("#" + format(v, ",")) for k, v in (("CoinGecko", m["cg_rank"]), ("CMC", m["cmc_rank"])) if v)
-        moved = _ltr(format(m["rank_chg"], "+.0f"))
-        if m["rank_chg"] > 0: add(bull, 5, f"ترتيب القيمة السوقية يتحسّن: {where} (متوسط {moved} مركزاً خلال أسبوع).")
-        else: add(bear, 5, f"ترتيب القيمة السوقية يتراجع: {where} (متوسط {moved} مركزاً خلال أسبوع).")
     if m["cex_of"]:
         if m["cex"] >= 5: add(bull, 6, f"مدرجة على {_ltr(m['cex'])} من {_ltr(m['cex_of'])} منصات مركزية نراقبها.")
         elif m["cex"] == 0: add(bear, 4, f"غير مدرجة على أي من المنصات المركزية الـ{_ltr(m['cex_of'])} التي نراقبها.")
@@ -204,7 +199,9 @@ def _cases(m):
         add(bull, 6, f"إيرادات فعلية {_usd(m['revenue_30d'])} خلال آخر 30 يوماً (DefiLlama).")
     if m["perf"] is not None and m["perf_days"]:
         since = f"منذ دخولها المتابعة قبل {_ltr(m['perf_days'])} يوم"
-        if m["perf"] >= 15: add(bull, 4, f"أداء قوي {since}: {_p(m['perf'])}.")
+        if m["perf"] > PUMP: add(bear, 6, f"صعدت {_p(m['perf'])} {since} — تمدد سعري ومخاطر جني أرباح.")
+        elif 5 <= m["perf"] and not _extended(m):
+            add(bull, 4, f"صعود مبكر صحي {since}: {_p(m['perf'])} وما زالت في منطقة التجميع.")
         elif m["perf"] <= -15: add(bear, 6, f"أداء ضعيف {since}: {_p(m['perf'])} تحت سعر الدخول.")
     # 9 status: drop reason / Check a Coin verdict
     if m["status"] == "dropped" and m["drop"]:

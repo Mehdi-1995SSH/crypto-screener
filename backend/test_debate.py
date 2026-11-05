@@ -40,13 +40,11 @@ dup = D.debate({**BASE, "price_chart": {"series": [["d", 0.95]] * 60}})         
 assert not any("قاع 60 يوماً" in x for x in plain(dup["bull_points"])) and any("منطقة الدخول" in x for x in dup["bull_points"])
 liq = lambda v: plain(D.debate({**BASE, "liquidity_now": v})["bull_points"] + D.debate({**BASE, "liquidity_now": v})["bear_points"])
 assert any("طلب قوي" in x for x in liq(150)) and any(x.startswith("نشاط ضعيف") for x in liq(10_000))
-src = lambda n: D.debate({**BASE, "liquidity_sources": {"n_above": n, "sources_count": 3, "threshold": 5000}})
-assert any("السيولة مؤكدة" in x for x in src(3)["bull_points"]) and any("غير مؤكدة" in x for x in src(1)["bear_points"])
-rk = lambda c: D.debate({**BASE, "ranks": {"coingecko": {"rank": 783, "was": 783 + c, "change": c},
-                                           "cmc": {"rank": 623, "was": 623 + c, "change": c}}})
-assert any("ترتيب القيمة السوقية يتحسّن" in x and "#783" in x for x in plain(rk(120)["bull_points"]))
-assert any("ترتيب القيمة السوقية يتراجع" in x for x in rk(-40)["bear_points"]) and rk(10) == spot   # < 20 places: no point
-assert D.debate({**BASE, "ranks": {"coingecko": 783, "cmc": 623}}) == spot                         # Check a Coin: rank only, no change
+# rank and multi-source liquidity confirmation are never used; abandoned liquidity still is
+assert D.debate({**BASE, "ranks": {"coingecko": {"rank": 783, "was": 903, "change": 120}, "cmc": {"rank": 623, "change": 90}}}) == spot
+assert D.debate({**BASE, "liquidity_sources": {"n_above": 3, "sources_count": 3, "threshold": 5000}}) == spot
+assert D.debate({**BASE, "liquidity_sources": {"n_above": 1, "sources_count": 3, "threshold": 5000}}) == spot
+assert any("مهجورة" in x for x in D.debate({**BASE, "liquidity_sources": {"abandoned": True}})["bear_points"])
 risky = D.debate({**BASE, "holders": {"now": 400}, "security_info": {"verified": False, "mint_disabled": False},
                   "supply": {"circulating_pct": 30, "uncapped": True}})
 rb = plain(risky["bear_points"])
@@ -58,8 +56,16 @@ soon = {"at": "2099-01-01T00:00:00+00:00", "mcap_pct": 3.0, "usd": 1e6}         
 assert any("لا يوجد فتح توكنات" in x for x in unl(soon)["bull_points"])
 bb = D.debate({**BASE, "supply": {"circulating_pct": 90, "buyback": {"has_verified_buyback": True, "proofs": ["DEFILLAMA"], "usd_30d": 9399}}})
 assert any("إعادة شراء موثّقة (من إيرادات البروتوكول - DefiLlama)" in x and "$9.4K" in x for x in plain(bb["bull_points"]))
-pf = lambda c: D.debate({**BASE, "performance": {"change_pct": c, "days_held": 5}})
-assert any(x.startswith("أداء قوي") for x in pf(20)["bull_points"]) and any(x.startswith("أداء ضعيف") for x in pf(-20)["bear_points"])
+# a pump past +35% is only ever a bear point - never praised by the bull agent (no contradiction)
+pf = lambda c, **kw: D.debate({**BASE, "performance": {"change_pct": c, "days_held": 5}, **kw})
+says_rise = lambda d: [x for x in d["bull_points"] if "منذ دخولها" in x or "صعود" in x]
+assert any(x.startswith("صعود مبكر صحي") for x in pf(20)["bull_points"])                     # early move, accumulation zone
+assert not says_rise(pf(122)) and any(x.startswith("صعدت") and "تمدد" in x for x in pf(122)["bear_points"])
+assert not says_rise(pf(20, price=2.0, price_chart={"series": [["d", 1.0]] * 14}))          # +100% above the 14d low
+assert not says_rise(pf(20, entry_zone={"position_pct": 70, "above_low_pct": 60.0}))        # upper half of the 60d range
+assert not says_rise(pf(3)) and any(x.startswith("أداء ضعيف") for x in pf(-20)["bear_points"])
+ext14 = D.debate({**BASE, "price": 1.36, "price_chart": {"series": [["d", 1.0]] * 14}})       # +36% above the 14d low
+assert any("فوق قاع 14 يوماً" in x for x in ext14["bear_points"])
 
 # 3 dropped: drop-reason point, stage, red outlook (unless clearly positive)
 dropped = D.debate({**BASE, "status": "dropped"}, drop={"date": "2026-11-04", "reason_ar": "الحجم يتراجع"})
