@@ -2904,7 +2904,8 @@
       <div class="note">The coin's score from each daily run (last 7 days) and its 6 components. Click a day's score to see what changed.
         * = no data that day, the active coins' median is used; ▲/▼ only counts parts with data on both days.</div>
       ${hist.length ? `<div class="scorewrap"><table class="scoretable" id="scoretable"><thead><tr><th class="rowlbl"></th>${head}</tr></thead>
-        <tbody><tr><td class="rowlbl">Score <small class="na">/ 100</small></td>${cells}</tr>${rows}</tbody></table></div>
+        <tbody><tr><td class="rowlbl">Price</td>${days.map(h => `<td>${h.price == null ? `<span class="na">—</span>` : fmtPrice(h.price)}</td>`).join("")}</tr>
+        <tr><td class="rowlbl">Score <small class="na">/ 100</small></td>${cells}</tr>${rows}</tbody></table></div>
         <div class="scorewhy" id="scorewhy" hidden></div>`
         : `<div class="note" style="margin:0">No score history yet - it starts with the next daily run.</div>`}</div>`;
   }
@@ -3455,6 +3456,7 @@
       "Check a coin": "افحص أي عقد: نطبّق عليه نفس خطوات الفلتر والسكور مباشرة ونعرض كل البيانات ونقاش الوكلاء.",
       "Coin Decision": "قرارات حوكمة ناجحة على Snapshot (حرق، إعادة شراء، اقتصاد التوكن، ترقيات) لعملات حقيقية خلال آخر 30 يوماً."}],
     [".scoretable td.rowlbl", {
+      "Price": "سعر العملة بالدولار وقت أخذ اللقطة اليومية (كل 24 ساعة) لمقارنة حركة السعر مع تغيّر السكور.",
       "Turnover & absorption": "الدوران: حجم 24 ساعة كنسبة من القيمة السوقية عبر كل المنصات (20) + الامتصاص الهادئ: حجم مرتفع دون هبوط السعر (10).",
       "Buyers": "نسبة المشترين إلى البائعين على DEX خلال 15 يوماً — فوق 1 تعني ضغط شراء (25).",
       "Holders": "نمو عدد الحاملين خلال 7 أيام (15) وسرعة هذا النمو (5).",
