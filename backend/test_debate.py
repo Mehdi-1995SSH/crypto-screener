@@ -24,10 +24,42 @@ fut = D.debate({**BASE, "futures": {"matched": True, "history": [{"funding": 0.0
                                                                  {"funding": -0.8, "oi": 210, "long_pct": 45}]}})
 assert any("Short Squeeze" in x for x in fut["bull_points"]) and fut["bull_score"] == spot["bull_score"] + 10   # funding 6 + OI 4
 
-# 2 score trajectory: entry score wins over the 7-day window; dropped coins fall back to their last recorded score
-d = D.debate(BASE, entry_score=40.0)
-assert "من 40 إلى 62 (+22)" in " ".join(plain(d["bull_points"])) and "منذ دخولها المتابعة" in d["final_verdict_ar"]
-assert D.metrics({**BASE, "score": None})["score"] == 62.0
+# 2 the coin's own score is never read or mentioned (any score / history -> the same debate)
+assert spot == D.debate({**BASE, "score": 5.0, "score_history": [{"score": 5.0}, {"score": 95.0}]})
+assert spot == D.debate({k: v for k, v in BASE.items() if k not in ("score", "score_history")})
+assert "السكور" not in str(spot) and "score" not in D.metrics(BASE)
+assert "المرحلة الحالية:" in spot["final_verdict_ar"]
+
+# 2b the newer rules: 60d extension, volume / liquidity, sources, rank, holders, contract, inflation, unlocks, performance
+NOZONE = {**BASE, "entry_zone": {}}                       # no Entry Zone point -> the 60d rule speaks
+ext = D.debate({**NOZONE, "price": 2.0, "price_chart": {"series": [["d", 1.0]] * 60}})          # +100% over the 60d low
+assert any(x.startswith("صعد") and "فوق قاع 60 يوماً" in x for x in plain(ext["bear_points"]))
+near = D.debate({**NOZONE, "price_chart": {"series": [["d", 0.95]] * 60}})                      # +5.3% over the 60d low
+assert any(x.startswith("قريب من قاع 60 يوماً") for x in plain(near["bull_points"]))
+dup = D.debate({**BASE, "price_chart": {"series": [["d", 0.95]] * 60}})                         # zone point already said it
+assert not any("قاع 60 يوماً" in x for x in plain(dup["bull_points"])) and any("منطقة الدخول" in x for x in dup["bull_points"])
+liq = lambda v: plain(D.debate({**BASE, "liquidity_now": v})["bull_points"] + D.debate({**BASE, "liquidity_now": v})["bear_points"])
+assert any("طلب قوي" in x for x in liq(150)) and any(x.startswith("نشاط ضعيف") for x in liq(10_000))
+src = lambda n: D.debate({**BASE, "liquidity_sources": {"n_above": n, "sources_count": 3, "threshold": 5000}})
+assert any("السيولة مؤكدة" in x for x in src(3)["bull_points"]) and any("غير مؤكدة" in x for x in src(1)["bear_points"])
+rk = lambda c: D.debate({**BASE, "ranks": {"coingecko": {"rank": 783, "was": 783 + c, "change": c},
+                                           "cmc": {"rank": 623, "was": 623 + c, "change": c}}})
+assert any("ترتيب القيمة السوقية يتحسّن" in x and "#783" in x for x in plain(rk(120)["bull_points"]))
+assert any("ترتيب القيمة السوقية يتراجع" in x for x in rk(-40)["bear_points"]) and rk(10) == spot   # < 20 places: no point
+assert D.debate({**BASE, "ranks": {"coingecko": 783, "cmc": 623}}) == spot                         # Check a Coin: rank only, no change
+risky = D.debate({**BASE, "holders": {"now": 400}, "security_info": {"verified": False, "mint_disabled": False},
+                  "supply": {"circulating_pct": 30, "uncapped": True}})
+rb = plain(risky["bear_points"])
+for frag in ("قاعدة حاملين صغيرة", "غير موثّق", "صلاحية السكّ", "أقل من نصف المعروض", "بلا سقف"):
+    assert any(frag in x for x in rb), frag
+unl = lambda nxt: D.debate({**BASE, "unlocks": {"status": "ok", "next": nxt}})
+assert any("لا يوجد فتح توكنات" in x for x in unl(None)["bull_points"])
+soon = {"at": "2099-01-01T00:00:00+00:00", "mcap_pct": 3.0, "usd": 1e6}                         # far future: not imminent
+assert any("لا يوجد فتح توكنات" in x for x in unl(soon)["bull_points"])
+bb = D.debate({**BASE, "supply": {"circulating_pct": 90, "buyback": {"has_verified_buyback": True, "proofs": ["DEFILLAMA"], "usd_30d": 9399}}})
+assert any("إعادة شراء موثّقة (من إيرادات البروتوكول - DefiLlama)" in x and "$9.4K" in x for x in plain(bb["bull_points"]))
+pf = lambda c: D.debate({**BASE, "performance": {"change_pct": c, "days_held": 5}})
+assert any(x.startswith("أداء قوي") for x in pf(20)["bull_points"]) and any(x.startswith("أداء ضعيف") for x in pf(-20)["bear_points"])
 
 # 3 dropped: drop-reason point, stage, red outlook (unless clearly positive)
 dropped = D.debate({**BASE, "status": "dropped"}, drop={"date": "2026-11-04", "reason_ar": "الحجم يتراجع"})
