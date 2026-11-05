@@ -1,4 +1,4 @@
-"""Self-check for the V3 scoring rules (pure functions, no database). Run: python test_scoring.py"""
+"""Self-check for the V3 scoring rules (pure functions) + score_history's daily price (in-memory SQLite). Run: python test_scoring.py"""
 from types import SimpleNamespace
 import scoring as S
 
@@ -31,4 +31,21 @@ row = lambda miss, **v: SimpleNamespace(missing=miss, **{**{c: 0.0 for c, *_ in 
 assert S._shared_change(row("", turnover=16), row("turnover", turnover=4))["buyers"] == 0
 assert "turnover" not in S._shared_change(row("", turnover=16), row("turnover", turnover=4))
 assert S._shared_change(row("", turnover=16), row(None)) is None
+# score_history: each day carries that day's snapshot price (None when the day has no snapshot)
+from datetime import date
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+import database, models as M
+eng = create_engine("sqlite://")
+database.Base.metadata.create_all(eng)
+s = sessionmaker(bind=eng)()
+c = M.Coin(contract="0xabc", chain="bsc", name="T"); s.add(c); s.flush()
+for d, sc in ((date(2026, 11, 3), 52.0), (date(2026, 11, 4), 62.0), (date(2026, 11, 2), 39.5)):
+    s.add(M.ScoreHistory(coin_id=c.id, score=sc, recorded_at=d))   # parts not needed here
+s.add_all([M.DailySnapshot(coin_id=c.id, date=date(2026, 11, 4), price_usd=0.02934),
+           M.DailySnapshot(coin_id=c.id, date=date(2026, 11, 2), price_usd=0.02121),
+           M.DailySnapshot(coin_id=c.id + 1, date=date(2026, 11, 3), price_usd=99.0)])   # another coin's day
+s.commit()
+h = S.score_history(s, c.id)
+assert [(x["date"], x["price"]) for x in h] == [("2026-11-04", 0.02934), ("2026-11-03", None), ("2026-11-02", 0.02121)]
 print("scoring self-check: ok")

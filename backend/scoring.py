@@ -401,15 +401,19 @@ def score_changes(session, coin_ids):
 def score_history(session, coin_id, days=SCORE_HISTORY_SHOW_DAYS):
     """The coin's last `days` recorded scores, newest first:
     [{"date", "score", "parts": {component: points} or None (before V3),
+      "price": that day's daily_snapshots USD price (None if no snapshot),
       "first": True when there is no earlier recorded day,
       "changes": [{"label", "delta"}] per component vs the previous day,
                  real-data parts only, biggest first; None when not comparable,
       "delta": the day's score change over those parts (None when not comparable)}].
     Never raises (-> [])."""
-    from models import ScoreHistory
+    from models import DailySnapshot, ScoreHistory
     try:
         rows = (session.query(ScoreHistory).filter(ScoreHistory.coin_id == coin_id)
                 .order_by(ScoreHistory.recorded_at.desc()).limit(days + 1).all())
+        # the same daily run's snapshot price for each score day (display only)
+        prices = dict(session.query(DailySnapshot.date, DailySnapshot.price_usd).filter(
+            DailySnapshot.coin_id == coin_id, DailySnapshot.date.in_([r.recorded_at for r in rows[:days]])))
     except Exception:
         session.rollback()
         return []
@@ -431,6 +435,7 @@ def score_history(session, coin_id, days=SCORE_HISTORY_SHOW_DAYS):
             changes = sorted(({"label": k, "delta": v} for k, v in comp.items() if abs(v) >= 0.05),
                              key=lambda c: -abs(c["delta"]))
         out.append({"date": row.recorded_at.isoformat(), "score": round(row.score, 1), "parts": parts,
+                    "price": prices.get(row.recorded_at),
                     "first": prev is None, "changes": changes,
                     "delta": None if ch is None else round(sum(ch.values()), 1),
                     "estimated": sorted({comp for col, _, comp, _ in PARTS                # median-filled
