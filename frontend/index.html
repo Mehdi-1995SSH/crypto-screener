@@ -183,6 +183,7 @@
   .cmp-top { font-size: 18px; font-weight: 700; margin: 6px 0; }
   /* Performance since caught */
   .livetag { display: block; font-size: 10px; color: var(--muted); font-weight: 400; margin-top: 2px; white-space: nowrap; }
+  .newtag { color: var(--good); font-weight: 700; white-space: nowrap; }
   .pnl { font-weight: 700; font-variant-numeric: tabular-nums; cursor: help; white-space: nowrap; }
   .pnl.up { color: #3fb950; } .pnl.down { color: #f85149; } .pnl.flat { color: var(--muted); font-weight: 500; }
   .perfov { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; background: var(--card); border: 1px solid var(--border);
@@ -656,6 +657,7 @@
           <th class="num">Price</th>
           <th class="num" data-sort="score" aria-sort="none"><button type="button" class="sorth">Score<span class="arr" aria-hidden="true"></span></button></th>
           <th class="num" data-sort="live_pnl.change_pct" aria-sort="none" title="Price change since the coin entered the Active list"><button type="button" class="sorth">P&amp;L<span class="arr" aria-hidden="true"></span></button></th>
+          <th class="num" data-sort="performance.entry_date" aria-sort="none" title="When the coin entered the Active list (first click: newest first)"><button type="button" class="sorth">Added<span class="arr" aria-hidden="true"></span></button></th>
           <th class="num" data-sort="mcap" aria-sort="none"><button type="button" class="sorth">Market Cap<span class="arr" aria-hidden="true"></span></button></th>
           <th class="num" data-sort="revenue" aria-sort="none"><button type="button" class="sorth">Revenue/day<span class="arr" aria-hidden="true"></span></button></th>
           <th class="num" data-sort="liq_value" aria-sort="none" title="Liquidity agreed by DexScreener, Codex and Birdeye (⚠️ = the sources disagree; hover a value for each source)"><button type="button" class="sorth">Liquidity<span class="arr" aria-hidden="true"></span></button></th>
@@ -1155,13 +1157,20 @@
         </td>
         ${priceCell(c)}
         <td class="num">${c.score == null ? "—" : `<span class="badge ${scoreClass(c.score)}">${c.score}</span>`}${scoreDelta(c)}</td>
-        ${pnlCell(c._fav ? c.performance : livePerf(c))}${favCells(c)}
+        ${pnlCell(c._fav ? c.performance : livePerf(c))}${favCells(c)}${c._fav ? "" : addedCell(c.performance)}
         <td class="num">${fmtMoney(c.mcap)}</td>
         <td class="num">${c.revenue == null ? "—" : fmtMoney(c.revenue)}</td>
         ${liqCell(c)}
         <td class="num">${fmtNum(c.holders)}</td>
         <td class="narrative">${c.category ? `<span class="tag">${esc(c.category)}</span>` : esc(c.narrative)}</td>
       </tr>`;
+  }
+  // Active table only: when the coin entered the list ("🆕 Today" / "3d") + the date.
+  function addedCell(p) {
+    if (!p || !p.entry_date) return `<td class="num"><span class="na">—</span></td>`;
+    const day = `<span class="livetag">${esc(perfDay(p.entry_date))}</span>`;
+    return p.days_held === 0 ? `<td class="num"><span class="newtag">🆕 Today</span>${day}</td>`
+                             : `<td class="num"><b>${p.days_held}d</b>${day}</td>`;
   }
   // Liquidity column: the 3-source value (median / agreeing pair, the lowest
   // when no two agree); ⚠️ when the sources disagree; tooltip = each source.
@@ -1286,7 +1295,7 @@
     document.getElementById("count-active").textContent = "(" + data.count + ")";
     paintSort("active");
     if (!data.coins.length) {
-      body.innerHTML = '<tr><td colspan="10" class="empty">No active coins right now.</td></tr>';
+      body.innerHTML = '<tr><td colspan="11" class="empty">No active coins right now.</td></tr>';
       return;
     }
     body.innerHTML = sortRows(data.coins, "active").map(coinRow).join("");
@@ -3435,6 +3444,9 @@
   function tip(text) { return ` <button type="button" class="ib" aria-label="شرح" data-tip="${esc(text)}">ⓘ</button>`; }
   const TIP_HOLDERS = "عدد المحافظ التي تحمل العملة (CoinMarketCap DEX).";
   const TIPS = [
+    // Active's "Added" first: Favorites has its own "Added" column with a different meaning
+    ["table[data-table='active'] thead th", {
+      "Added": "تاريخ دخول العملة لقائمة المتابعة النشطة وعدد الأيام منذ التقاطها. اضغط لترتيب العملات من الأحدث دخولاً (اليوم) إلى الأقدم."}],
     ["table[data-table] thead th", {
       "#": "ترتيب العملة في القائمة حسب السكور، الأعلى أولاً.",
       "Name": "اسم العملة وشبكتها. الشارات: 🆕 دخلت القائمة في آخر تشغيل يومي · 🔥 حجم 24 ساعة فوق 25% من القيمة السوقية · 🚨/⚠️/📈 قفزة في الحجم مقارنة بمتوسط 30 يوماً · 🚨/🐋 رادار ما قبل الإدراج (نشاط منصات أو صناع سوق). اضغط الصف لفتح صفحة العملة.",
