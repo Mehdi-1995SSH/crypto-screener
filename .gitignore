@@ -1,7 +1,14 @@
 # ===== Secrets - NEVER commit (API keys, DB connection string) =====
 .env
+.env*
 *.env
 backend/.env
+
+# ===== Personal / exported data - never commit =====
+*wallet*.csv
+related_personal_wallets.csv
+*.xlsx
+outputs/
 
 # ===== Python =====
 __pycache__/

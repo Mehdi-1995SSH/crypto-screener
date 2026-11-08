@@ -8,6 +8,10 @@ on:
     - cron: "0 6 * * *"   # 06:00 UTC every day
   workflow_dispatch: {}    # also lets you run it manually from the Actions tab
 
+# Least privilege: the job only reads the code (secrets come from repo secrets).
+permissions:
+  contents: read
+
 # One run at a time: a manual run started while the scheduled one is going
 # waits for it instead of running the pipeline twice in parallel.
 concurrency:
